@@ -1,0 +1,1 @@
+Thank you for registering on the Bihar Clean Air App. Your account has been created. Please log in to the app to raise your complaints.

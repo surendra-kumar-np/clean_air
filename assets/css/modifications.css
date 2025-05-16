@@ -1,0 +1,303 @@
+.summary-section {
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-top: 30px;
+}
+
+.summary-section>div {
+    width: calc(100%/4 - 15px);
+    margin: 0;
+    padding: 0 22px;
+    justify-content: space-between;
+    border-radius: 16px;
+    transition: box-shadow 0.25s ease-in-out;
+}
+
+.summary-section>div:hover {
+    box-shadow: 0px 0px 10px 5px rgb(0, 0, 0, 0.2);
+}
+
+.summary-section>div label+span {
+    font-weight: normal;
+    display: inline-block;
+    margin-top: 5px;
+}
+
+.summary-section .icon-circle svg {
+    height: 50px;
+    width: 50px;
+}
+
+/* Dashboard Summary status backgrounds */
+.total-issues-bg {
+    background: transparent linear-gradient(90deg, #42E7F3 0%, #05A9B5 100%) 0% 0% no-repeat;
+}
+
+.pending-bg {
+    background: transparent linear-gradient(90deg, #FF9100 0%, #FF4200 100%) 0% 0% no-repeat;
+}
+
+.resolved-bg {
+    background: transparent linear-gradient(90deg, #2BB47A 0%, #117851 100%) 0% 0% no-repeat;
+}
+
+.referred-bg {
+    background: transparent linear-gradient(90deg, #B4862B 0%, #A47925 100%) 0% 0% no-repeat;
+}
+
+.longTerm-bg {
+    background: transparent linear-gradient(90deg, #1A73E8 0%, #0048A5 100%) 0% 0% no-repeat;
+}
+
+.submitForApproval-bg {
+    background: transparent linear-gradient(90deg, #C01EF9 0%, #7C0AA4 100%) 0% 0% no-repeat;
+}
+
+.unassigned-bg {
+    background: transparent linear-gradient(90deg, #EF3350 0%, #B51032 100%) 0% 0% no-repeat;
+}
+
+.verified-bg {
+    background: transparent linear-gradient(90deg, #EF33B7 0%, #BB3292 100%) 0% 0% no-repeat;
+}
+
+#actionItems .dashboard-row {
+    background: #E9F3FF;
+}
+
+#actionItems .dashboard-cell {
+    padding: 12px 18px;
+}
+
+#actionItems .action-item strong {
+    color: #323A45;
+    font-weight: 700 !important;
+}
+#verifiedItems .action-item strong {
+    color: #323A45;
+    font-weight: 700 !important;
+}
+
+.ui-dialog {
+    z-index: 100000 !important;
+}
+
+.titleHead {
+    border: 1px solid #ddd;
+    margin-bottom: 25px;
+}
+
+.titleHead_title {
+    background: #d4d4d4;
+    color: #202020;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 14px 20px;
+    margin: 0 !important;
+}
+
+.titleHead_title-wrapper {
+    padding: 20px;
+}
+
+.titleHead_title-wrapper input {
+    border-radius: 0px;
+    border: 1px solid #d4d4d4;
+    padding-left: 15px;
+}
+
+#btnDelete {
+    background: #0655a3;
+    color: #fff !important;
+}
+
+.buttons-csv {
+    border: 1px solid #0655a3 !important;
+    background: #fff;
+    font-weight: 700;
+    color: #0655a3;
+    height: 3.28rem !important;
+    margin-bottom: 0 !important;
+    margin-left: 10px !important;
+}
+
+.dataTables_length {
+    float: right !important;
+    margin-top: 10px;
+}
+
+.customCheckWrap {
+    position: relative;
+    overflow: hidden;
+    margin: 0;
+}
+
+.customCheckWrap input.detailInput {
+    position: absolute;
+    z-index: -10;
+}
+
+.customCheckWrap input.detailInput:checked~.detailInputLabel {
+    background: #0655a3;
+    border-color: #0655a3;
+}
+
+.customCheckWrap input.detailInput:checked~.detailInputLabel::after {
+    display: block;
+}
+
+.customCheckWrap .detailInputLabel {
+    height: 20px;
+    width: 20px;
+    border: 2px solid #dedede;
+    border-radius: 2px;
+    cursor: pointer;
+    position: relative;
+}
+
+.customCheckWrap .detailInputLabel::after {
+    height: 4px;
+    width: 9px;
+    border-bottom: 2px solid #fff;
+    border-left: 2px solid #fff;
+    content: '';
+    transform: rotate(-45deg);
+    position: absolute;
+    top: 6px;
+    left: 4px;
+    display: none;
+}
+
+.ui-dialog .ui-dialog-titlebar-close::after{
+    content: '✕';
+    position: absolute;
+    top: -2px;
+    left: 3px;
+    color: #000000;
+}
+
+.beforeAfterImage {
+    margin: 0 !important;
+    display: flex;
+}
+.beforeAfterImage li{
+    margin: 0 !important;
+    width: calc(100%/3);
+    border-right: 1px solid #ddd;
+}
+.beforeAfterImage li:last-child{
+    border-right: 0;
+}
+.beforeAfterImage_ListWrapper{
+    padding: 15px 20px;
+    text-align: center;
+}
+.beforeAfterImage_ListWrapper ul li{
+    width: 100% !important;
+    margin-bottom: 15px !important;
+}
+.beforeAfterImage h4 {
+    color: #323A45;
+    text-align: center;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 11px;
+    background: #EEF0F5;
+    margin: 0;
+}
+
+.beforeAfterImage>div {
+    padding: 0 !important;
+}
+
+.raisedComment li:last-child{
+    border-right: none !important;
+}
+
+.gm-ui-hover-effect{
+    top: 0px !important;
+    right: 0px !important;
+    background-color: #c4c4c4 !important;
+}
+.verificationboxWrap{
+    display: flex;
+    flex-wrap: wrap;
+    position: relative;
+}
+.verificationboxWrap::after{
+    content: '';
+    position: absolute;
+    height: 100%;
+    width: 1px;
+    right: 50%;
+    background: #dedede;
+}
+.verificationboxWrap::before{
+    content: '';
+    position: absolute;
+    height: 1px;
+    width: 100%;
+    right: 0;
+    top: 50%;
+    background: #dedede;
+}
+.verificationbox{
+    width: 50%;
+    display: flex;
+    align-items: center;
+    padding: 5px 3px;
+}
+.verificationbox:nth-child(2),
+.verificationbox:nth-child(4){
+    padding-left: 20px;
+}
+.verificationbox label{
+    display: inline-block !important;
+}
+.verificationbox span{
+    line-height: 1;
+    margin: 0 !important;
+    margin-left: 5px !important;
+}
+
+/* @media screen and (max-width: 1440px) {} */
+
+/* @media screen and (max-width: 1199px) {} */
+
+@media screen and (max-width: 991px) {
+    .summary-section {
+        display: flex !important;
+    }
+
+    .summary-section>div {
+        width: calc(100%/3 - 15px) !important;
+        height: 70px;
+        margin: 0 !important;
+    }
+}
+
+@media screen and (max-width: 767px) {
+    .summary-section {
+        display: block !important;
+    }
+
+    .summary-section>div {
+        width: calc(100%/2 - 15px) !important;
+        margin-bottom: 15px !important;
+    }
+    .beforeAfterImage {
+        display: block;
+    }
+    .beforeAfterImage li{
+        width: 100%;
+    }
+    .beforeAfterImage h4{
+        text-align: left;
+    }
+    .raisedComment{
+        display: block;
+    }
+    .raisedComment li{
+        padding-left: 11px !important;
+    }
+}

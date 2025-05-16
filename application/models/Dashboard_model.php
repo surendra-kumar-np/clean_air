@@ -1,0 +1,2598 @@
+<?php
+
+defined('BASEPATH') or exit('No direct script access allowed');
+
+class Dashboard_model extends App_Model
+{
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    /**
+     * @return array
+     * Used in home dashboard page
+     * Return all upcoming events this week
+     */
+    public function get_upcoming_events()
+    {
+        $this->db->where('(start BETWEEN "' . date('Y-m-d', strtotime('monday this week')) . '" AND "' . date('Y-m-d', strtotime('sunday this week')) . '")');
+        $this->db->where('(userid = ' . get_staff_user_id() . ' OR public = 1)');
+        $this->db->order_by('start', 'desc');
+        $this->db->limit(6);
+
+        return $this->db->get(db_prefix() . 'events')->result_array();
+    }
+
+    /**
+     * @param  integer (optional) Limit upcoming events
+     * @return integer
+     * Used in home dashboard page
+     * Return total upcoming events next week
+     */
+    public function get_upcoming_events_next_week()
+    {
+        $monday_this_week = date('Y-m-d', strtotime('monday next week'));
+        $sunday_this_week = date('Y-m-d', strtotime('sunday next week'));
+        $this->db->where('(start BETWEEN "' . $monday_this_week . '" AND "' . $sunday_this_week . '")');
+        $this->db->where('(userid = ' . get_staff_user_id() . ' OR public = 1)');
+
+        return $this->db->count_all_results(db_prefix() . 'events');
+    }
+
+    /**
+     * @param  mixed
+     * @return array
+     * Used in home dashboard page, currency passed from javascript (undefined or integer)
+     * Displays weekly payment statistics (chart)
+     */
+    public function get_weekly_payments_statistics($currency)
+    {
+        $all_payments                 = [];
+        $has_permission_payments_view = has_permission('payments', '', 'view');
+        $this->db->select(db_prefix() . 'invoicepaymentrecords.id, amount,' . db_prefix() . 'invoicepaymentrecords.date');
+        $this->db->from(db_prefix() . 'invoicepaymentrecords');
+        $this->db->join(db_prefix() . 'invoices', '' . db_prefix() . 'invoices.id = ' . db_prefix() . 'invoicepaymentrecords.invoiceid');
+        $this->db->where('YEARWEEK(invoicepaymentrecords.date) = YEARWEEK(CURRENT_DATE)');
+        $this->db->where('' . db_prefix() . 'invoices.status !=', 5);
+        if ($currency != 'undefined') {
+            $this->db->where('currency', $currency);
+        }
+
+        if (!$has_permission_payments_view) {
+            $this->db->where('invoiceid IN (SELECT id FROM ' . db_prefix() . 'invoices WHERE addedfrom=' . get_staff_user_id() . ')');
+        }
+
+        // Current week
+        $all_payments[] = $this->db->get()->result_array();
+        $this->db->select(db_prefix() . 'invoicepaymentrecords.id, amount,' . db_prefix() . 'invoicepaymentrecords.date');
+        $this->db->from(db_prefix() . 'invoicepaymentrecords');
+        $this->db->join(db_prefix() . 'invoices', '' . db_prefix() . 'invoices.id = ' . db_prefix() . 'invoicepaymentrecords.invoiceid');
+        $this->db->where('YEARWEEK(invoicepaymentrecords.date) = YEARWEEK(CURRENT_DATE - INTERVAL 7 DAY) ');
+
+        $this->db->where('' . db_prefix() . 'invoices.status !=', 5);
+        if ($currency != 'undefined') {
+            $this->db->where('currency', $currency);
+        }
+        // Last Week
+        $all_payments[] = $this->db->get()->result_array();
+
+        $chart = [
+            'labels'   => get_weekdays(),
+            'datasets' => [
+                [
+                    'label'           => _l('this_week_payments'),
+                    'backgroundColor' => 'rgba(37,155,35,0.2)',
+                    'borderColor'     => '#84c529',
+                    'borderWidth'     => 1,
+                    'tension'         => false,
+                    'data'            => [
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                ],
+                [
+                    'label'           => _l('last_week_payments'),
+                    'backgroundColor' => 'rgba(197, 61, 169, 0.5)',
+                    'borderColor'     => '#c53da9',
+                    'borderWidth'     => 1,
+                    'tension'         => false,
+                    'data'            => [
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                ],
+            ],
+        ];
+
+
+        for ($i = 0; $i < count($all_payments); $i++) {
+            foreach ($all_payments[$i] as $payment) {
+                $payment_day = date('l', strtotime($payment['date']));
+                $x           = 0;
+                foreach (get_weekdays_original() as $day) {
+                    if ($payment_day == $day) {
+                        $chart['datasets'][$i]['data'][$x] += $payment['amount'];
+                    }
+                    $x++;
+                }
+            }
+        }
+
+        return $chart;
+    }
+
+    public function projects_status_stats()
+    {
+        $this->load->model('projects_model');
+        $statuses = $this->projects_model->get_project_statuses();
+        $colors   = get_system_favourite_colors();
+
+        $chart = [
+            'labels'   => [],
+            'datasets' => [],
+        ];
+
+        $_data                         = [];
+        $_data['data']                 = [];
+        $_data['backgroundColor']      = [];
+        $_data['hoverBackgroundColor'] = [];
+        $_data['statusLink']           = [];
+
+
+        $has_permission = has_permission('projects', '', 'view');
+        $sql            = '';
+        foreach ($statuses as $status) {
+            $sql .= ' SELECT COUNT(*) as total';
+            $sql .= ' FROM ' . db_prefix() . 'projects';
+            $sql .= ' WHERE status=' . $status['id'];
+            if (!$has_permission) {
+                $sql .= ' AND id IN (SELECT project_id FROM ' . db_prefix() . 'project_members WHERE staff_id=' . get_staff_user_id() . ')';
+            }
+            $sql .= ' UNION ALL ';
+            $sql = trim($sql);
+        }
+
+        $result = [];
+        if ($sql != '') {
+            // Remove the last UNION ALL
+            $sql    = substr($sql, 0, -10);
+            $result = $this->db->query($sql)->result();
+        }
+
+        foreach ($statuses as $key => $status) {
+            array_push($_data['statusLink'], admin_url('projects?status=' . $status['id']));
+            array_push($chart['labels'], $status['name']);
+            array_push($_data['backgroundColor'], $status['color']);
+            array_push($_data['hoverBackgroundColor'], adjust_color_brightness($status['color'], -20));
+            array_push($_data['data'], $result[$key]->total);
+        }
+
+        $chart['datasets'][]           = $_data;
+        $chart['datasets'][0]['label'] = _l('home_stats_by_project_status');
+
+        return $chart;
+    }
+
+    public function leads_status_stats()
+    {
+        $chart = [
+            'labels'   => [],
+            'datasets' => [],
+        ];
+
+        $_data                         = [];
+        $_data['data']                 = [];
+        $_data['backgroundColor']      = [];
+        $_data['hoverBackgroundColor'] = [];
+        $_data['statusLink']           = [];
+
+        $result = get_leads_summary();
+
+        foreach ($result as $status) {
+            if (!isset($status['junk']) && !isset($status['lost'])) {
+                if ($status['color'] == '') {
+                    $status['color'] = '#737373';
+                }
+                array_push($chart['labels'], $status['name']);
+                array_push($_data['backgroundColor'], $status['color']);
+                array_push($_data['statusLink'], admin_url('leads?status=' . $status['id']));
+                array_push($_data['hoverBackgroundColor'], adjust_color_brightness($status['color'], -20));
+                array_push($_data['data'], $status['total']);
+            }
+        }
+
+        $chart['datasets'][] = $_data;
+
+        return $chart;
+    }
+
+    /**
+     * Display total tickets awaiting reply by department (chart)
+     * @return array
+     */
+    public function tickets_awaiting_reply_by_department()
+    {
+        $this->load->model('departments_model');
+        $departments = $this->departments_model->get();
+        $colors      = get_system_favourite_colors();
+        $chart       = [
+            'labels'   => [],
+            'datasets' => [],
+        ];
+
+        $_data                         = [];
+        $_data['data']                 = [];
+        $_data['backgroundColor']      = [];
+        $_data['hoverBackgroundColor'] = [];
+
+        $i = 0;
+        foreach ($departments as $department) {
+            if (!is_admin()) {
+                if (get_option('staff_access_only_assigned_departments') == 1) {
+                    $staff_deparments_ids = $this->departments_model->get_staff_departments(get_staff_user_id(), true);
+                    $departments_ids      = [];
+                    if (count($staff_deparments_ids) == 0) {
+                        $departments = $this->departments_model->get();
+                        foreach ($departments as $department) {
+                            array_push($departments_ids, $department['departmentid']);
+                        }
+                    } else {
+                        $departments_ids = $staff_deparments_ids;
+                    }
+                    if (count($departments_ids) > 0) {
+                        $this->db->where('department IN (SELECT departmentid FROM ' . db_prefix() . 'staff_departments WHERE departmentid IN (' . implode(',', $departments_ids) . ') AND staffid="' . get_staff_user_id() . '")');
+                    }
+                }
+            }
+            $this->db->where_in('status', [
+                1,
+                2,
+                4,
+            ]);
+
+            $this->db->where('department', $department['departmentid']);
+            $total = $this->db->count_all_results(db_prefix() . 'tickets');
+
+            if ($total > 0) {
+                $color = '#333';
+                if (isset($colors[$i])) {
+                    $color = $colors[$i];
+                }
+                array_push($chart['labels'], $department['name']);
+                array_push($_data['backgroundColor'], $color);
+                array_push($_data['hoverBackgroundColor'], adjust_color_brightness($color, -20));
+                array_push($_data['data'], $total);
+            }
+            $i++;
+        }
+
+        $chart['datasets'][] = $_data;
+
+        return $chart;
+    }
+
+    /**
+     * Display total tickets awaiting reply by status (chart)
+     * @return array
+     */
+    public function tickets_awaiting_reply_by_status()
+    {
+        $this->load->model('tickets_model');
+        $statuses             = $this->tickets_model->get_ticket_status();
+        $_statuses_with_reply = [
+            1,
+            2,
+            4,
+        ];
+
+        $chart = [
+            'labels'   => [],
+            'datasets' => [],
+        ];
+
+        $_data                         = [];
+        $_data['data']                 = [];
+        $_data['backgroundColor']      = [];
+        $_data['hoverBackgroundColor'] = [];
+        $_data['statusLink']           = [];
+
+        foreach ($statuses as $status) {
+            if (in_array($status['ticketstatusid'], $_statuses_with_reply)) {
+                if (!is_admin()) {
+                    if (get_option('staff_access_only_assigned_departments') == 1) {
+                        $staff_deparments_ids = $this->departments_model->get_staff_departments(get_staff_user_id(), true);
+                        $departments_ids      = [];
+                        if (count($staff_deparments_ids) == 0) {
+                            $departments = $this->departments_model->get();
+                            foreach ($departments as $department) {
+                                array_push($departments_ids, $department['departmentid']);
+                            }
+                        } else {
+                            $departments_ids = $staff_deparments_ids;
+                        }
+                        if (count($departments_ids) > 0) {
+                            $this->db->where('department IN (SELECT departmentid FROM ' . db_prefix() . 'staff_departments WHERE departmentid IN (' . implode(',', $departments_ids) . ') AND staffid="' . get_staff_user_id() . '")');
+                        }
+                    }
+                }
+
+                $this->db->where('status', $status['ticketstatusid']);
+                $total = $this->db->count_all_results(db_prefix() . 'tickets');
+                if ($total > 0) {
+                    array_push($chart['labels'], ticket_status_translate($status['ticketstatusid']));
+                    array_push($_data['statusLink'], admin_url('tickets/index/' . $status['ticketstatusid']));
+                    array_push($_data['backgroundColor'], $status['statuscolor']);
+                    array_push($_data['hoverBackgroundColor'], adjust_color_brightness($status['statuscolor'], -20));
+                    array_push($_data['data'], $total);
+                }
+            }
+        }
+
+        $chart['datasets'][] = $_data;
+
+        return $chart;
+    }
+
+    public function get_action_items()
+    {
+        $userArea = $GLOBALS['current_user']->area;
+        $pageno = !empty($_POST['pageno']) ? $_POST['pageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+        //echo $offset;
+        $userId = get_staff_user_id(); //$GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa', 'qc');
+        //$userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+           // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+
+            // $this->db->where('(p.status IN (1,2,5,6,10,11,12,15,16) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            $this->db->where('(p.status IN (1,15,16))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.status != 14');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+           // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+           $this->db->where('(p.status IN (1,6,10))');
+            // $this->db->where('(p.status IN (1,2,5,11,10,12,15,16,6) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.status != 14');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+            
+        } else if ($userRole == 'aa') {
+            
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id,ta.status as task_status, ta.taskid as task_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+            $this->db->where('p.area_id',$userArea);
+            $this->db->where('(p.status IN (9))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        } else if ($userRole == 'ar'){
+            $userId = get_staff_user_id();
+            $userDetails =  $this->staff_model->get_userDetails($userId);
+
+            // //Get list of all ATs reporting to AR
+            // $at_ids = $this->get_ar_assistant($userId);
+            // $at_ids_array = explode(',', $at_ids);
+
+            // if(!in_array($userId,$at_ids_array)){
+            //     array_push($at_ids_array,$userId);
+            // }
+
+            // $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+            
+            // if (empty($at_ids))
+            //     return array();
+
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            // $this->db->where('(p.status IN ('.AR_ACTION_ITEMS.') OR (p.status = 3 AND DATE_FORMAT(p.date_finished,"%Y-%m-%d") = CURDATE()) OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "'.ESCALATION_TIME.'") )');
+            //comment by chanky regarding show project status
+            // $this->db->where('(p.status IN (' . AR_ACTION_ITEMS . ') OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+            // $this->db->where('(p.status IN (5) OR (p.status IN (6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+            $this->db->where('(p.status IN (5))');
+            $this->db->where('p.area_id = ' . $userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id IN (' . $userId . ') )');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('p.status,action_date');
+
+        } else if ($userRole == 'qc'){
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.status IN (3)');
+            //$this->db->where('p.frozen = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        }
+        $this->db->limit($no_of_records_per_page, $offset);
+// echo $this->db->last_query();exit;
+         return $this->db->get()->result_array();
+    }
+
+    public function get_action_items_delayed()
+    {
+        $pageno = !empty($_POST['pageno']) ? $_POST['pageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        $userId = get_staff_user_id(); //$GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+           // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+
+            $this->db->where('(p.status IN (1,2,5,11,12,15,16) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.frozen = 0');
+            $this->db->order_by('p.updated_at','desc');
+            $this->db->order_by('action_date,p.status');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (1,2,5,6,10) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            $this->db->order_by('action_date,ta.status');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id,ta.status as task_status, ta.taskid as task_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            $this->db->order_by('action_date,p.status');
+        }
+        $this->db->limit($no_of_records_per_page, $offset);
+
+        // $this->db->get()->result_array();
+        // echo $this->db->last_query(); die;
+        return $this->db->get()->result_array();
+    }
+
+    public function get_action_items_refered()
+    {
+        $pageno = !empty($_POST['pageno']) ? $_POST['pageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        $userId = get_staff_user_id(); //$GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+           // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+
+            $this->db->where('(p.status IN (5))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (5) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,ta.status');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id,ta.status as task_status, ta.taskid as task_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+           
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        }else if ($userRole == 'ar') {
+            $at_ids = $this->get_ar_assistant($userId);
+            $at_ids_array = explode(',', $at_ids);
+    
+            if(!in_array($userId,$at_ids_array)){
+                array_push($at_ids_array,$userId);
+            }
+    
+            $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+            
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            // $this->db->where('(p.status IN ('.AR_ACTION_ITEMS.') OR (p.status = 3 AND DATE_FORMAT(p.date_finished,"%Y-%m-%d") = CURDATE()) OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "'.ESCALATION_TIME.'") )');
+            //comment by chanky regarding show project status
+            // $this->db->where('(p.status IN (' . AR_ACTION_ITEMS . ') OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+            $this->db->where('(p.status IN (5) )');
+            $this->db->where('p.area_id = ' . $userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1  and assigned=1 AND staff_id IN (' . $userId . ') )');
+            //$this->db->where('p.frozen = 0');
+            //$this->db->order_by('p.status,action_date');
+             $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+        } 
+        $this->db->limit($no_of_records_per_page, $offset);
+
+        // $this->db->get()->result_array();
+        // echo $this->db->last_query(); die;
+        return $this->db->get()->result_array();
+    }
+    public function get_action_items_pendingforapproval()
+    {
+        $pageno = !empty($_POST['pageno']) ? $_POST['pageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        $userId = get_staff_user_id(); //$GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+           // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+
+            $this->db->where('(p.status IN (12,11) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (11,12)  )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,ta.status');
+        } else if ($userRole == 'aa' || $userRole == 'ar') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id,ta.status as task_status, ta.taskid as task_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1  AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        }
+        $this->db->limit($no_of_records_per_page, $offset);
+
+        // $this->db->get()->result_array();
+        // echo $this->db->last_query(); die;
+        return $this->db->get()->result_array();
+    }
+    public function get_action_item_counts()
+    { 
+        $userArea = $GLOBALS['current_user']->area;
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa', 'qc');
+        //$userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            // $this->db->where('(p.status IN (1,2,5,6,11,10,12,15,16) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            $this->db->where('(p.status IN (1,15,16))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.status != 14');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            //$this->db->where('(p.status IN (1,2,5,6,10,11,12,15,16) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('(p.status IN (1,6,10))');
+            //$this->db->where('p.frozen = 0');
+            //$this->db->where('p.status != 14');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+            $this->db->where('p.area_id',$userArea);
+            $this->db->where('(p.status IN (9))');
+           // $this->db->where('p.start_date <= CURDATE()');
+           // $this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'qc'){
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.status IN (3)');
+            $this->db->where('p.area_id',$userArea);
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->where('p.frozen = 0');
+        }
+       
+        return $this->db->count_all_results();
+    }
+    public function get_action_item_notviewed_counts()
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND viewed=0 AND staff_id = ' . $userId . ')');
+            // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            // $this->db->where('(p.status IN (1,2,5,10,11,12,15,16,6) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            $this->db->where('(p.status IN (1,15,16))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            //$this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND viewed=0 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            // $this->db->where('(p.status IN (1,2,5,10,11,12,15,16,6) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            $this->db->where('(p.status IN (1,6,10))');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            // $this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            $this->db->where('p.area_id',$userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->where('p.view = 0');
+            //$this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        }else if($userRole == 'ar'){
+            $userId = get_staff_user_id();
+            $userDetails =  $this->staff_model->get_userDetails($userId);
+
+            //Get list of all ATs reporting to AR
+            $at_ids = $this->get_ar_assistant($userId);
+            $at_ids_array = explode(',', $at_ids);
+
+            if(!in_array($userId,$at_ids_array)){
+                array_push($at_ids_array,$userId);
+            }
+
+            $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+        
+            // if (empty($at_ids))
+            //     return array();
+
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            // $this->db->where('(p.status IN ('.AR_ACTION_ITEMS.') OR (p.status = 3 AND DATE_FORMAT(p.date_finished,"%Y-%m-%d") = CURDATE()) OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "'.ESCALATION_TIME.'") )');
+            //comment by chanky regarding show project status
+            // $this->db->where('(p.status IN (' . AR_ACTION_ITEMS . ') OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+            $this->db->where('(p.status IN (5) )');
+            $this->db->where('p.area_id = ' . $userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND viewed=0 AND staff_id IN (' . $userId . ') )');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+
+        }
+        return $this->db->count_all_results();
+    }
+    
+    public function get_action_item_notviewed_refered_counts()
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (5) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            //$this->db->where('p.view = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (5) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'ar') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND assigned = 1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (5))');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('action_date');
+        }
+        return $this->db->count_all_results();
+    }
+
+    public function get_action_item_closed_counts($notviewed = null)
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('qc');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'qc') {
+            $this->db->select('p.id');
+            // $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+           
+            $this->db->where('(p.status IN (3) )');
+            $this->db->where('p.area_id',$userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            
+            if(!empty($notviewed)){
+                $this->db->where('p.view = 0');
+            }
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } 
+        return $this->db->count_all_results();
+    }
+
+    public function get_action_item_verified_counts($notviewed = null)
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('qc');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+        $userArea = $GLOBALS['current_user']->area;
+
+        if ($userRole == 'qc' || $userRole == 'aa') {
+            
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            
+            $this->db->where('(p.status IN (13,4,15,16) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.area_id',$userArea);
+            if(!empty($notviewed)){
+                $this->db->where('p.view = 0');
+            }
+            
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } 
+        $this->db->group_by('p.id');
+        $dataCount = $this->db->get()->result_array();
+        return count($dataCount);
+        //return $this->db->count_all_results();
+    }
+
+    public function get_action_item_verified($notviewed = null)
+    {
+        //$userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('qc');
+        //$userDetails =  $this->staff_model->get_userDetails($userId);
+        $userArea = $GLOBALS['current_user']->area;
+
+        $pageno = !empty($_POST['nextpageno']) ? $_POST['nextpageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        if ($userRole == 'qc' || $userRole == 'aa'){
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.status IN (13,4,15,16)');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.area_id',$userArea);
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('action_date,p.status');
+        }
+        $this->db->limit($no_of_records_per_page, $offset);
+// echo $this->db->last_query();exit;
+         return $this->db->get()->result_array();
+    }
+
+    public function get_action_item_notviewed_sendingforapproval_counts()
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND viewed = 0 AND staff_id = ' . $userId . ')');
+            // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (12,11)  )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND viewed = 0 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (11,12) )');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (12,11)  )');
+            $this->db->where('p.area_id',$userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            $this->db->where('p.view = 0');
+            //$this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        }
+        // $this->db->group_by('p.id');
+        // $dataCount = $this->db->get()->result_array();
+        return $this->db->count_all_results();
+        // return count($dataCount);
+        //return $this->db->count_all_results();
+    }
+    public function get_action_item_refered_counts()
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (5) )');
+            // $this->db->where('(p.status IN (1,2,5,11,12,15,16) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            //$this->db->where('p.start_date <= CURDATE()');
+            //$this->db->where('p.frozen = 0');
+            //$this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (5)  )');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+            
+            // $this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        }
+        else if ($userRole == 'ar') {
+            //Get list of all ATs reporting to AR
+            $at_ids = $this->get_ar_assistant($userId);
+            $at_ids_array = explode(',', $at_ids);
+
+            if(!in_array($userId,$at_ids_array)){
+                array_push($at_ids_array,$userId);
+            }
+
+            $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+        
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            // $this->db->where('(p.status IN ('.AR_ACTION_ITEMS.') OR (p.status = 3 AND DATE_FORMAT(p.date_finished,"%Y-%m-%d") = CURDATE()) OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "'.ESCALATION_TIME.'") )');
+            //comment by chanky regarding show project status
+            // $this->db->where('(p.status IN (' . AR_ACTION_ITEMS . ') OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+            $this->db->where('(p.status IN (5) )');
+            $this->db->where('p.area_id = ' . $userDetails->area);
+            //$this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id IN (' . $userId . ') )');
+            //$this->db->where('p.frozen = 0');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        }
+        // echo $this->db->last_query();exit;
+        $this->db->group_by('p.id');
+        $dataCount = $this->db->get()->result_array();
+        return count($dataCount);
+    }
+
+    public function get_action_item_pendingforapproval_counts()
+    {
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+        
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1  AND staff_id = ' . $userId . ')');
+            // $this->db->where('(p.status IN (' . ACTION_ITEMS . ') OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (12,11) )');
+            // $this->db->where('(p.status IN (1,2,5,11,12,15,16) OR (p.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3)) )');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+            // $this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned,p.reassigned,p.area_id,p.region_id,p.subregion_id,p.ward_id,p.issue_id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1  AND staff_id = ' . $userId . ')');
+            //$this->db->where('(ta.status IN (1,6) OR (ta.status = 2 AND p.action_date < CURDATE()) OR (p.action_date = "' . date('Y-m-d') . '" AND p.status NOT IN (3,5)) )');
+            $this->db->where('(p.status IN (12,11) )');
+            // $this->db->where('p.start_date <= CURDATE()');
+            
+            // $this->db->where('p.frozen = 0');
+            // $this->db->order_by('p.status,action_date');
+            $this->db->order_by('p.updated_at','desc');
+        } else if ($userRole == 'aa' || $userRole == 'ar') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (9))');
+            // $this->db->where('p.start_date <= CURDATE()');
+            // $this->db->where('p.frozen = 0');
+            //$this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+            //$this->db->order_by('p.status,action_date');
+        }
+        // $this->db->group_by('p.id');
+        // $dataCount = $this->db->get()->result_array();
+        // return count($dataCount);
+        return $this->db->count_all_results();
+    }
+
+    public function next_week_deadline()
+    {
+        $pageno = !empty($_POST['nextpageno']) ? $_POST['nextpageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        $tomorrow = date('Y-m-d', strtotime(' +1 day'));
+        $nextWeek = date('Y-m-d', strtotime(' +7 day'));
+
+        $userId = $GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('p.status IN (2,6)');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.action_date BETWEEN "' . $tomorrow . '" and "' . $nextWeek . '"');
+            $this->db->where('p.frozen = 0');
+            $this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = p.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = ta.status', 'left');
+
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('p.status IN (2,6)');
+            $this->db->where('ta.status IN (2,6)');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.action_date BETWEEN "' . $tomorrow . '" and "' . $nextWeek . '"');
+            $this->db->where('p.frozen = 0');
+            $this->db->order_by('ta.status,action_date');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (13))');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.action_date BETWEEN "' . $tomorrow . '" and "' . $nextWeek . '"');
+            $this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+        }
+        $this->db->limit($no_of_records_per_page, $offset);
+
+        return $this->db->get()->result_array();
+    }
+
+    public function next_week_deadline_count()
+    {
+        $tomorrow = date('Y-m-d', strtotime(' +1 day'));
+        $nextWeek = date('Y-m-d', strtotime(' +7 day'));
+
+        $userId = $GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $roles = array('at', 'ata', 'aa');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        if ($userRole == 'at') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            // $this->db->where('p.status NOT IN (1,3,5)');
+            $this->db->where('p.status IN (2,6)');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.action_date BETWEEN "' . $tomorrow . '" and "' . $nextWeek . '"');
+            $this->db->where('p.frozen = 0');
+            $this->db->order_by('p.status,action_date');
+        } else if ($userRole == 'ata') {
+            $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,ta.status as status_id, p.frozen,p.reassigned');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = p.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = ta.status', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            // $this->db->where('p.status  NOT IN (1,3,5)');
+            // $this->db->where('ta.status NOT IN (1,3,5)');
+            $this->db->where('p.status IN (2,6)');
+            $this->db->where('ta.status IN (2,6)');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.action_date BETWEEN "' . $tomorrow . '" and "' . $nextWeek . '"');
+            $this->db->where('p.frozen = 0');
+            $this->db->order_by('ta.status,action_date');
+        } else if ($userRole == 'aa') {
+            $this->db->select('p.id');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+            $this->db->join(db_prefix() . 'project_activity pa', 'pa.project_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'tasks t', 't.rel_id = p.id', 'left');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = t.id', 'left');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+            $this->db->where('(p.status IN (13))');
+            $this->db->where('p.start_date <= CURDATE()');
+            $this->db->where('p.action_date BETWEEN "' . $tomorrow . '" and "' . $nextWeek . '"');
+            $this->db->where('p.frozen = 0');
+            $this->db->group_by('p.id');
+            $this->db->order_by('p.updated_at','desc');
+        }
+        return $this->db->count_all_results();
+    }
+
+    public function get_dashboard_widget_data()
+    {
+        $userId = $GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $userArea = $GLOBALS['current_user']->area;
+
+        $roles = array('at', 'ata', 'ar', 'aa','qc');
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+        //echo $userRole;exit;
+        //2,4,6 -> In progress,Resolved,Re-Opened
+        if ($userRole == 'at') {
+            $psUserId = [];
+            $psList = $this->staff_model->get_staff_assistance($userId);
+            if(!empty($psList)){
+                foreach($psList as $key){
+                    array_push($psUserId,$key['staffid']);
+                }
+                array_push($psUserId,$userId);
+            } else {
+                array_push($psUserId,$userId);
+            }
+
+            $psUserList = implode(',', $psUserId);
+            
+            $this->db->select('SUM(CASE WHEN p.status IN(1,3,4,5,6,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total_activity, 
+            SUM(CASE WHEN p.status = 1 THEN 1 ELSE 0 END) as new,
+            SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as closed,
+            SUM(CASE WHEN p.status = 6 THEN 1 ELSE 0  END) as reopen,
+            SUM(CASE WHEN p.status = 5 THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN p.status = 10 THEN 1 ELSE 0  END) as longterm,
+            SUM(CASE WHEN p.status IN(11,12) THEN 1 ELSE 0  END) as submitforapproval,
+            SUM(CASE WHEN p.status IN(13) THEN 1 ELSE 0  END) as verified,
+            SUM(CASE WHEN p.status = 4 THEN 1 ELSE 0  END) as resolved,
+            SUM(CASE WHEN p.status = 16 THEN 1 ELSE 0  END) as part_resolved,
+            SUM(CASE WHEN p.status = 15 THEN 1 ELSE 0  END) as unresolved,
+            SUM(CASE WHEN p.status = 9 THEN 1 ELSE 0  END) as unassigned');
+
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+            $this->db->where('p.area_id',$userArea);
+            // $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned =1 AND staff_id IN (' . $psUserList . ') )');
+        } elseif ($userRole == 'ata') {
+            $this->db->select('SUM(CASE WHEN p.status IN(1,3,4,5,6,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total_activity, 
+            SUM(CASE WHEN p.status = 1 THEN 1 ELSE 0 END) as new,
+            SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as closed,
+            SUM(CASE WHEN p.status = 6 THEN 1 ELSE 0  END) as reopen,
+            SUM(CASE WHEN p.status = 5 THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN p.status = 10 THEN 1 ELSE 0  END) as longterm,
+            SUM(CASE WHEN p.status IN(11,12) THEN 1 ELSE 0  END) as submitforapproval,
+            SUM(CASE WHEN p.status = 9 THEN 1 ELSE 0  END) as unassigned,
+            SUM(CASE WHEN p.status IN(13) THEN 1 ELSE 0  END) as verified,
+            SUM(CASE WHEN p.status = 4 THEN 1 ELSE 0  END) as resolved,
+            SUM(CASE WHEN p.status = 16 THEN 1 ELSE 0  END) as part_resolved,
+            SUM(CASE WHEN p.status = 15 THEN 1 ELSE 0  END) as unresolved,
+            SUM(CASE WHEN ((ta.status IN (2,6) AND p.action_date < CURDATE())) THEN 1 ELSE 0  END) as escalated,
+            SUM(CASE WHEN (ta.status IN (2,6)  AND p.action_date >= CURDATE()) THEN 1 ELSE 0  END) as ongoing');
+
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = p.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = ta.status', 'left');
+            $this->db->where('p.area_id',$userArea);
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1  AND staff_id = ' . $userId . ') or p.id in(select project_id from ' . db_prefix() . 'project_members where active = 1 and referred=1  AND staff_id = ' . $userId . ')');
+        } else if ($userRole == 'aa') {
+            $this->db->select('SUM(CASE WHEN p.status IN(1,3,4,5,6,9,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total_activity, 
+            SUM(CASE WHEN p.status = 1 THEN 1 ELSE 0 END) as new,
+            SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as closed,
+            SUM(CASE WHEN p.status = 6 THEN 1 ELSE 0  END) as reopen,
+            SUM(CASE WHEN p.status = 5 THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN p.status = 10 THEN 1 ELSE 0  END) as longterm,
+            SUM(CASE WHEN p.status IN (11,12) THEN 1 ELSE 0  END) as submitforapproval,
+            SUM(CASE WHEN p.status = 9 THEN 1 ELSE 0  END) as unassigned,
+            SUM(CASE WHEN p.status IN(13) THEN 1 ELSE 0  END) as verified,
+            SUM(CASE WHEN p.status = 4 THEN 1 ELSE 0  END) as resolved,
+            SUM(CASE WHEN p.status = 16 THEN 1 ELSE 0  END) as part_resolved,
+            SUM(CASE WHEN p.status = 15 THEN 1 ELSE 0  END) as unresolved,
+            SUM(CASE WHEN ((p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") ) THEN 1 ELSE 0  END) as escalated,
+            SUM(CASE WHEN (p.status IN (2,4,6)  AND p.action_date >= CURDATE() ) THEN 1 ELSE 0  END) as ongoing');
+
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+            $this->db->where('p.area_id',$userArea);
+            
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id = ' . $userId . ')');
+        } else if($userRole == 'ar'){
+            //Get list of all ATs reporting to AR
+            $at_ids = $this->get_ar_assistant($userId);
+            
+            // $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+            // $at_ids = ltrim($at_ids,",");
+            $conditionUserId = [];
+            $at_list = !empty($at_ids) ? explode(',',$at_ids) : '';
+            $at_ids_array = explode(',', $at_ids);
+
+            if(!in_array($userId,$at_ids_array)){
+                array_push($at_ids_array,$userId);
+            }
+    
+            $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+            $at_ids = ltrim($at_ids,",");
+           
+            // $at_list = !empty($at_list) ? implode(',', $at_list) : '';
+            
+            
+            $psList = $this->staff_model->get_staff_assistance_array($at_ids);
+            // print_r($psList);exit;
+            if(!empty($at_list)){
+                foreach($at_list as $key=>$value){
+                    array_push($conditionUserId,$value);
+                }
+                array_push($conditionUserId,$userId);
+            } else {
+                array_push($conditionUserId,$userId);
+            }
+
+            if(!empty($psList)){
+                foreach($psList as $key){
+                    array_push($conditionUserId,$key['staffid']);
+                }
+            }
+
+            $this->db->select('SUM(CASE WHEN p.status IN(1,3,4,5,6,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total_activity, 
+            SUM(CASE WHEN p.status = 1 THEN 1 ELSE 0 END) as new,
+            SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as closed,
+            SUM(CASE WHEN p.status = 5 THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN p.status = 6 THEN 1 ELSE 0  END) as reopen,
+            SUM(CASE WHEN p.status = 10 THEN 1 ELSE 0  END) as longterm,
+            SUM(CASE WHEN p.status IN(13) THEN 1 ELSE 0  END) as verified,
+            SUM(CASE WHEN p.status = 4 THEN 1 ELSE 0  END) as resolved,
+            SUM(CASE WHEN p.status = 16 THEN 1 ELSE 0  END) as part_resolved,
+            SUM(CASE WHEN p.status = 15 THEN 1 ELSE 0  END) as unresolved,
+            SUM(CASE WHEN ((p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date <= "' . date('Y-m-d') . '") ) THEN 1 ELSE 0  END) as escalated,
+            SUM(CASE WHEN (p.status IN (2,4,6)  AND p.action_date >= CURDATE() ) THEN 1 ELSE 0  END) as ongoing');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+            $this->db->where('p.area_id = ' . $userDetails->area);
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned = 1 AND staff_id IN (' . implode(',', $conditionUserId) . ') )');
+        } elseif ($userRole == 'ae-area') {
+            $this->db->select('SUM(CASE WHEN p.status IN(1,3,4,5,6,9,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total_activity, 
+            SUM(CASE WHEN p.status = 1 THEN 1 ELSE 0 END) as new,
+            SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as closed,
+            SUM(CASE WHEN p.status = 5 THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN p.status = 10 THEN 1 ELSE 0  END) as longterm,
+            SUM(CASE WHEN p.status IN(11,12) THEN 1 ELSE 0  END) as submitforapproval,
+            SUM(CASE WHEN p.status = 9 THEN 1 ELSE 0  END) as unassigned,
+            SUM(CASE WHEN p.status IN(13) THEN 1 ELSE 0  END) as verified,
+            SUM(CASE WHEN p.status = 4 THEN 1 ELSE 0  END) as resolved,
+            SUM(CASE WHEN p.status = 16 THEN 1 ELSE 0  END) as part_resolved,
+            SUM(CASE WHEN p.status = 15 THEN 1 ELSE 0  END) as unresolved,
+            SUM(CASE WHEN ((ta.status IN (2,6) AND p.action_date < CURDATE())) THEN 1 ELSE 0  END) as escalated,
+            SUM(CASE WHEN (ta.status IN (2,6)  AND p.action_date >= CURDATE()) THEN 1 ELSE 0  END) as ongoing');
+
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'task_assigned ta', 'ta.taskid = p.id', 'left');
+            $this->db->join(db_prefix() . 'project_status ps', 'ps.id = ta.status', 'left');
+            $this->db->where('p.area_id',$userArea);
+            //$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned=1 AND staff_id = ' . $userId . ')');
+        } else if ($userRole == 'qc') {
+            $this->db->select('SUM(CASE WHEN p.status IN(3,13,4,15,16) THEN 1 ELSE 0  END) as total_activity, 
+            SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as closed,
+            SUM(CASE WHEN p.status IN(13) THEN 1 ELSE 0  END) as verified,
+            SUM(CASE WHEN p.status = 4 THEN 1 ELSE 0  END) as resolved,
+            SUM(CASE WHEN p.status = 16 THEN 1 ELSE 0  END) as part_resolved,
+            SUM(CASE WHEN p.status = 15 THEN 1 ELSE 0  END) as unresolved');
+
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+            $this->db->where('p.area_id',$userArea);
+            
+        }
+
+        // $this->db->where('p.start_date <= CURDATE()');
+        // $this->db->where('p.frozen = 0');
+        
+		$row = $this->db->get()->row();
+        //echo $this->db->last_query(); die;
+        return $row;
+    }
+
+    public function get_dashboard_map_data($tableParams, $type=null)
+    {
+        $userId = $GLOBALS['current_user']->staffid;
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+		
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+		
+		$category = (!empty($tableParams['category'])) ? $tableParams['category'] : '';
+		$clients = (!empty($tableParams['clients'])) ? $tableParams['clients'] : '';
+		$subregion = (!empty($tableParams['subregion'])) ? $tableParams['subregion'] : '';
+		$ticket = (!empty($tableParams['ticket'])) ? $tableParams['ticket'] : '';
+		
+        $report_date = (!empty($tableParams['report_date'])) ? $tableParams['report_date'] : '';
+        $to_date = (!empty($tableParams['to_date'])) ? date("Y-m-d", strtotime($tableParams['to_date'])) : '';
+        $from_date = (!empty($tableParams['from_date'])) ? date("Y-m-d", strtotime($tableParams['from_date']))  : '';
+		
+        //2,4,6 -> In progress,Resolved,Re-Opened
+        if ($userRole == 'ar' || $userRole == 'ae-area') {
+            //Get list of all ATs reporting to AR
+            $at_ids = $this->get_ar_assistant($userId);
+		//print_r($at_ids);exit;	
+            if (empty($at_ids))
+                return array();
+			
+			$pro_id = [];
+			if (!empty($report_date)) {
+				$proIds = $this->report_model->get_project_action($report_date, $to_date, $from_date, '');
+				
+				if (!empty($proIds)) {
+					foreach ($proIds as $var) {
+						$pro_id[] = $var['project_id'];
+					}
+				}
+			}
+			
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+			$this->db->where('p.area_id = ' . $userDetails->area);
+			$this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id IN (' . $at_ids . ') )');
+			$this->db->where('p.start_date <= CURDATE()');
+			$this->db->where('p.frozen = 0');
+			
+			
+			if (!empty($clients)) {
+				//$this->db->where_in('p.clientid', $clients);
+				$this->db->where('p.clientid IN ('. $clients .')');
+			}
+			
+			if (!empty($subregion)) {
+				$this->db->where('p.subregion_id IN ('. $subregion .')');
+			}
+			
+			if (!empty($category)) {
+				$this->db->where('p.issue_id IN ('. $category .')');
+			}
+			
+			if (!empty($report_date)) {
+				if (!empty($pro_id)) {
+					$this->db->where_in('p.id', $pro_id);
+				} else {
+					$this->db->where('p.id', 0);
+				}
+			}
+			
+			if($type == 'new') {
+				$this->db->select('p.id as projectId, color, "#2c77ee" as markerColor');
+				
+				$this->db->where('( p.status = 1 AND p.action_date > CURDATE() )');
+				
+			} else if($type == 'ongoing') {
+				$this->db->select('p.id as projectId, color, "#f5b500" as markerColor');
+				
+				$this->db->where('((p.status IN (2,4,6) AND p.action_date >= CURDATE()) )');
+				
+			} else if($type == 'closed') {
+				$this->db->select('p.id as projectId, color, "#2bb47a" as markerColor');
+				
+				$this->db->where('p.status = 3');
+				
+				$this->db->where('TIMESTAMPDIFF(HOUR, date_finished, now() ) <= 24');//less than 24 hours
+			
+			} else {
+				//escalated
+				$this->db->select('p.id as projectId, color, "#f43653" as markerColor');
+				
+				$this->db->where('((p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date <= "' . date('Y-m-d') . '") )');
+			}
+			
+			$this->db->order_by('projectId', 'desc');
+        }
+		
+		$data = $this->db->get()->result_array();
+		
+        //echo $this->db->last_query(); die;
+		
+        return $data;
+    }
+	
+	public function get_latest_project_files_data($projectId)
+    {
+		$this->db->select('id as pf_id, file_name, subject, thumbnail_link, latitude, longitude');
+		$this->db->from(db_prefix() . 'project_files');
+        $this->db->where('project_id', $projectId);
+         $this->db->where("milestone", 0);
+		$this->db->order_by('dateadded', 'desc');
+		$this->db->limit(1);
+        // $this->db->get()->row();
+        //  echo $this->db->last_query();exit;
+         return $this->db->get()->row();
+    }
+
+    public function get_evidence_image($projectId, $taskId = NULL, $milestone = NULL)
+    {
+        if (is_array($taskId)) {
+            // print_r($taskId);
+            $date = @$taskId['date'];
+            $taskId = @$taskId['task_id'];
+            $date = date('Y-m-d H:i', strtotime($date));
+            // $this->db->where('DATE_FORMAT(dateadded1,"%Y-%m-%d")', $date);
+            $this->db->like('dateadded', $date);
+        }
+        
+        $this->db->where('project_id', $projectId);
+        if (!empty($taskId)) {
+            $this->db->where("milestone", $taskId);
+        } else if ($milestone == 1) {
+            $this->db->where("milestone", 0);
+        }else if ($milestone == 2) {
+            $this->db->where("milestone", 4);
+        }
+        $this->db->order_by('dateadded', 'desc');
+        
+
+        return $this->db->get(db_prefix() . 'project_files')->result_array();
+    }
+
+    public function get_evidence_image_new($projectId, $taskId = NULL, $milestone = NULL)
+    {
+        // if (is_array($taskId)) {
+        //     $date = @$taskId['date'];
+        //     $taskId = @$taskId['task_id'];
+        //     $date = date('Y-m-d', strtotime($date));
+        //     $this->db->where('DATE_FORMAT(dateadded,"%Y-%m-%d")', $date);
+        // }
+        if (is_array($taskId)) {
+            // print_r($taskId);
+            $date = @$taskId['date'];
+            $taskId = @$taskId['task_id'];
+            $date = date('Y-m-d H:i', strtotime($date));
+            // $this->db->where('DATE_FORMAT(dateadded1,"%Y-%m-%d")', $date);
+            $this->db->like('dateadded', $date);
+        }
+        $this->db->where('project_id', $projectId);
+        if (!empty($taskId)) {
+            $this->db->where("milestone", $taskId);
+        } 
+
+        $this->db->order_by('dateadded', 'desc');
+        return $this->db->get(db_prefix() . 'project_files')->result_array();
+        // $mileston ='';
+        // if (!empty($taskId)) {
+        //     $mileston = " and milestone = ".$taskId;
+        // } 
+        // $query = "SELECT * FROM 
+        //         (
+        //         SELECT ROW_NUMBER() OVER(ORDER BY CASE WHEN task_id = 0 THEN 1 ELSE 2 END DESC, id DESC) AS tasksno,
+        //         ROW_NUMBER() OVER(ORDER BY CASE WHEN contact_id = 0 THEN 1 ELSE 2 END DESC, id DESC) AS contno,
+        //         pp.* FROM `project_files` pp WHERE `project_id` = ".$projectId." ".$mileston."
+        //             ) hh WHERE tasksno = 1 OR contno = 1";
+
+        //     return $this->db->query($query)->result_array();
+    }
+
+    public function get_evidence_location($projectId, $fileId)
+    {
+        if (!empty($fileId)) {
+            $this->db->where('id', $fileId);
+        }
+        $this->db->where('project_id', $projectId);
+        $this->db->order_by('milestone');
+        return $this->db->get(db_prefix() . 'project_files')->row();
+    }
+
+
+    public function get_ar_assistant($userId)
+    {
+        // $assistantLists = $this->staff_model->get_action_reviewer_takers($userId);
+        $assistantLists = $this->staff_model->get_action_reviewer_action_takers($userId);
+        $assistant_list = array();
+        foreach ($assistantLists as $assistant) {
+            if(!empty($assistant['staff_id']))
+                $assistant_list[] = $assistant['staff_id'];
+        }
+        return !empty($assistant_list) ? implode(',', $assistant_list) : '';
+    }
+
+    public function get_ar_action_items()
+    {
+        // -> Delayed - AT Name - Status 2
+        // -> Unaccepted - AT Name - Status 1 and time > 48 hrs
+        // -> Rejected - only action - instead of AT name show Rejection reason - Status 2
+        $pageno = !empty($_POST['pageno']) ? $_POST['pageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        $userId = get_staff_user_id();
+        $userRole = $GLOBALS['current_user']->role_slug_url;
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        //Get list of all ATs reporting to AR
+        $at_ids = $this->get_ar_assistant($userId);
+
+        $at_ids_array = explode(',', $at_ids);
+
+        if(!in_array($userId,$at_ids_array)){
+            array_push($at_ids_array,$userId);
+        }
+
+        $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+
+        if (empty($at_ids))
+            return array();
+
+        $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+        $this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+        // $this->db->where('(p.status IN ('.AR_ACTION_ITEMS.') OR (p.status = 3 AND DATE_FORMAT(p.date_finished,"%Y-%m-%d") = CURDATE()) OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "'.ESCALATION_TIME.'") )');
+
+        //comment by chanky regarding show project status
+        //1,2,5
+        //$this->db->where('(p.status IN (' . AR_ACTION_ITEMS . ') OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+        $this->db->where('(p.status IN (1,2,5,6,10,15,16) )');
+
+        $this->db->where('p.area_id = ' . $userDetails->area);
+        //$this->db->where('p.start_date <= CURDATE()');
+        $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned = 1 AND staff_id IN (' . $at_ids . ') )');
+        //$this->db->where('p.frozen = 0');
+        $this->db->order_by('p.updated_at','desc');
+        //$this->db->order_by('action_date,p.status');
+        $this->db->limit($no_of_records_per_page, $offset);
+
+        // $this->db->get()->result_array();
+        // echo $this->db->last_query(); die;
+        return $this->db->get()->result_array();
+    }
+
+    public function total_ar_action_items()
+    {
+        $userId = get_staff_user_id();
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        //Get list of all ATs reporting to AR
+        $at_ids = $this->get_ar_assistant($userId);
+        $at_ids_array = explode(',', $at_ids);
+
+        if(!in_array($userId,$at_ids_array)){
+            array_push($at_ids_array,$userId);
+        }
+
+        $at_ids = !empty($at_ids_array) ? implode(',', $at_ids_array) : '';
+        $at_ids = ltrim($at_ids,",");
+        if (empty($at_ids))
+            return array();
+
+        $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id, p.frozen,p.reassigned');
+        $this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+        // $this->db->where('(p.status IN ('.AR_ACTION_ITEMS.') OR (p.status = 3 AND DATE_FORMAT(p.date_finished,"%Y-%m-%d") = CURDATE()) OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "'.ESCALATION_TIME.'") )');
+        //comment by chanky regarding show project status
+        // $this->db->where('(p.status IN (' . AR_ACTION_ITEMS . ') OR (p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.action_date < "' . date('Y-m-d') . '") )');
+        $this->db->where('(p.status IN (1,2,5,6,10,15,16) )');
+        $this->db->where('p.area_id = ' . $userDetails->area);
+        //$this->db->where('p.start_date <= CURDATE()');
+        $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 and assigned = 1 AND staff_id IN (' . $at_ids . ') )');
+        //$this->db->where('p.frozen = 0');
+        $this->db->order_by('p.updated_at','desc');
+        //$this->db->order_by('p.status,action_date');
+
+        return $this->db->count_all_results();
+    }
+
+    public function recently_ar_closed_tickets()
+    {
+        $pageno = !empty($_POST['nextpageno']) ? $_POST['nextpageno'] : 1;
+        // $pageno = 1;
+        $no_of_records_per_page = ACTION_ITEM_LIST;
+        $offset = ($pageno - 1) * $no_of_records_per_page;
+
+        $today = date('Y-m-d');
+        $lastWeek = date('Y-m-d', strtotime(' -7 day'));
+
+        $userId = get_staff_user_id();
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        //Get list of all ATs reporting to AR
+        $at_ids = $this->get_ar_assistant($userId);
+
+        if (empty($at_ids))
+            return array();
+
+        $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.bg-color,ps.name as status_name,p.status as status_id');
+        $this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+        $this->db->where('p.status = 3 and DATE_FORMAT(p.date_finished,"%Y-%m-%d") BETWEEN "' . $lastWeek . '" and "' . $today . '"');
+        $this->db->where('p.area_id = ' . $userDetails->area);
+        $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id IN (' . $at_ids . ') )');
+        $this->db->where('p.frozen = 0');
+        $this->db->order_by('p.status,date_finished', 'desc');
+        $this->db->limit($no_of_records_per_page, $offset);
+
+        return $this->db->get()->result_array();
+    }
+
+    public function total_ar_closed_tickets()
+    {
+        $today = date('Y-m-d');
+        $lastWeek = date('Y-m-d', strtotime(' -7 day'));
+
+        $userId = get_staff_user_id();
+        $userDetails =  $this->staff_model->get_userDetails($userId);
+
+        //Get list of all ATs reporting to AR
+        $at_ids = $this->get_ar_assistant($userId);
+
+        if (empty($at_ids))
+            return array();
+
+        $this->db->select('p.name as project_name,p.id as project_id, p.*,ps.color,ps.name as status_name,p.status as status_id');
+        $this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'project_status ps', 'ps.id = p.status', 'left');
+        $this->db->where('p.status = 3 and DATE_FORMAT(p.date_finished,"%Y-%m-%d") BETWEEN "' . $lastWeek . '" and "' . $today . '"');
+        $this->db->where('p.area_id = ' . $userDetails->area);
+        $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active = 1 AND staff_id IN (' . $at_ids . ') )');
+        $this->db->where('p.frozen = 0');
+        $this->db->order_by('p.status,date_finished', 'desc');
+
+        return $this->db->count_all_results();
+    }
+
+    public function get_ae_global($tableParams)
+    {
+
+
+        $report_date = (!empty($tableParams['report_date'])) ? $tableParams['report_date'] : '';
+        $to_date = (!empty($tableParams['to_date'])) ? date("Y-m-d", strtotime($tableParams['to_date'])) : '';
+        $from_date = (!empty($tableParams['from_date'])) ? date("Y-m-d", strtotime($tableParams['from_date']))  : '';
+        $category = (!empty($tableParams['category'])) ? $tableParams['category'] : '';
+        $area = !empty($tableParams["area"]) ? $tableParams["area"] : "";
+        $region_list = !empty($tableParams["region_list"]) ? $tableParams["region_list"] : "";
+        $sub_region_list = !empty($tableParams["sub_region_list"]) ? $tableParams["sub_region_list"] : "";
+        $duration = (!empty($tableParams['duration'])) ? $tableParams['duration'] : '';
+        $statusIds = ['1', '2', '3', '5','6', '7', '8', '9','10','11','12','13','15','16'];
+        $cat_id = [];
+        //  pre($tableParams);
+
+
+        if (!empty($tableParams['category'])) {
+            foreach ($tableParams['category'] as $c_id) {
+                $cat_id[] = $c_id;
+            }
+            $catids = $this->get_parent_category($category);
+            if (count($catids) > 0) {
+                foreach ($catids as $var) {
+                    $cat_id[] = $var['id'];
+                }
+            }
+        }
+        // pre($cat_id);
+
+        // pre($report_date);
+        $pro_id = [];
+        if (!empty($report_date)) {
+            $proIds = $this->report_model->get_project_action($report_date, $to_date, $from_date, $statusIds);
+            if (!empty($proIds)) {
+                foreach ($proIds as $var) {
+                    $pro_id[] = $var['project_id'];
+                }
+            }
+        }
+
+        if ($region_list == "" && $sub_region_list == "") {
+            $this->db->select('areaid,a.name, 
+            SUM(CASE WHEN p.status IN(1,3,5,6,9,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total,
+            SUM(CASE WHEN (p.status = 1  AND p.frozen = 0) THEN 1 ELSE 0  END) as new,
+            SUM(CASE WHEN (p.status = 3 AND p.frozen = 0) THEN 1 ELSE 0  END) as close, 
+            SUM(CASE WHEN (p.status = 6 AND p.frozen = 0) THEN 1 ELSE 0  END) as reopen, 
+            SUM(CASE WHEN (p.status = 5 AND p.frozen = 0) THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN (p.status = 10 AND p.frozen = 0) THEN 1 ELSE 0  END) as longterm, 
+            SUM(CASE WHEN (p.status = 9 AND p.is_assigned = 0 AND p.frozen = 0) THEN 1 ELSE 0  END) as unassign,  
+            SUM(CASE WHEN (p.status IN (11,12)) THEN 1 ELSE 0  END) as total_pendingforapp,
+            SUM(CASE WHEN (p.status IN (4,13,15,16)) THEN 1 ELSE 0  END) as verified');
+            $this->db->from(db_prefix() . 'projects p');
+            $this->db->join(db_prefix() . 'area a', 'a.areaid = p.area_id', 'left');
+            $this->db->order_by("a.name", "ASC");
+        }
+        if ($region_list != "") {
+            $this->db->select('r.id as region_id, r.region_name,
+            SUM(CASE WHEN p.status IN(1,3,5,6,9,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total,
+            SUM(CASE WHEN (p.status = 1  AND p.frozen = 0) THEN 1 ELSE 0  END) as new,
+            SUM(CASE WHEN (p.status = 3 AND p.frozen = 0) THEN 1 ELSE 0  END) as close, 
+            SUM(CASE WHEN (p.status = 6 AND p.frozen = 0) THEN 1 ELSE 0  END) as reopen, 
+            SUM(CASE WHEN (p.status = 5 AND p.frozen = 0) THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN (p.status = 10 AND p.frozen = 0) THEN 1 ELSE 0  END) as longterm, 
+            SUM(CASE WHEN (p.status = 9 AND p.is_assigned = 0 AND p.frozen = 0) THEN 1 ELSE 0  END) as unassign,  
+            SUM(CASE WHEN (p.status IN (11,12)) THEN 1 ELSE 0  END) as total_pendingforapp,
+            SUM(CASE WHEN (p.status IN (4,13,15,16)) THEN 1 ELSE 0  END) as verified');
+            $this->db->from(db_prefix() . 'region r');
+            $this->db->join(db_prefix() . 'projects p', 'r.id = p.region_id', 'left');
+            // $this->db->where(["r.status" => 1, "r.is_deleted" => 0]);
+            $this->db->order_by("r.region_name", "ASC");
+        }
+        if ($sub_region_list != "") {
+            $this->db->select('sr.id as sub_region_id, sr.region_name as sub_region_name,
+            SUM(CASE WHEN p.status IN(1,3,5,6,9,10,11,12,13,15,16) THEN 1 ELSE 0  END) as total,
+            SUM(CASE WHEN (p.status = 1  AND p.frozen = 0) THEN 1 ELSE 0  END) as new,
+            SUM(CASE WHEN (p.status = 3 AND p.frozen = 0) THEN 1 ELSE 0  END) as close, 
+            SUM(CASE WHEN (p.status = 6 AND p.frozen = 0) THEN 1 ELSE 0  END) as reopen, 
+            SUM(CASE WHEN (p.status = 5 AND p.frozen = 0) THEN 1 ELSE 0  END) as referred,
+            SUM(CASE WHEN (p.status = 10 AND p.frozen = 0) THEN 1 ELSE 0  END) as longterm, 
+            SUM(CASE WHEN (p.status = 9 AND p.is_assigned = 0 AND p.frozen = 0) THEN 1 ELSE 0  END) as unassign,  
+            SUM(CASE WHEN (p.status IN (11,12)) THEN 1 ELSE 0  END) as total_pendingforapp,
+            SUM(CASE WHEN (p.status IN (4,13,15,16)) THEN 1 ELSE 0  END) as verified');
+            $this->db->from(db_prefix() . 'sub_region sr ');
+            $this->db->join(db_prefix() . 'projects p', 'sr.id = p.subregion_id', 'left');
+            // $this->db->where(["sr.status" => 1, "sr.is_deleted" => 0]);
+            $this->db->order_by("sr.region_name", "ASC");
+        }
+
+        // if (!empty($cat_id) && count($cat_id) > 0) {
+        //     $this->db->join(db_prefix() . 'issue_categories ic ', 'ic.id = p.issue_id', 'left');
+        //     $this->db->where_in('ic.id', $cat_id);
+        // }
+
+        if (!empty($duration)  && empty($category)) {
+            $this->db->where('p.issue_id', 0);
+        }
+
+        // if (!empty($category) && count($category) > 0 && $role != 5) {
+        //     $this->db->where_in('p.issue_id', $category);
+        // }
+
+        if (!empty($cat_id) && count($cat_id) > 0) {
+            // $this->db->where_in('p.issue_id', $cat_id);
+            $this->db->group_start();
+            $this->db->where_in('p.issue_id', $cat_id);
+            $this->db->or_where_in('p.issue_id', $category);
+            $this->db->group_end();
+        }
+
+        if (!empty($report_date)) {
+            if (!empty($pro_id)) {
+                $this->db->where_in('p.id', $pro_id);
+            } else {
+                $this->db->where('p.id', 0);
+            }
+        }
+
+        if ($area != "") {
+            $this->db->where('p.area_id', $area);
+        }
+        if ($region_list != "") {
+            $this->db->where_in("p.region_id", $region_list);
+        }
+        if ($sub_region_list != "") {
+            $this->db->where_in("p.subregion_id", $sub_region_list);
+        }
+
+        if (!empty($report_date) && $report_date != 'custom') {
+
+            // if ($report_date == 'this_month') {
+            //     $this->db->where("p.action_date", date('m'));
+            // } else if ($report_date == 'last_month') {
+            //     $this->db->where("p.action_date", date('m', strtotime('-1 month')));
+            // } else if ($report_date == 'this_year') {
+            //     $this->db->where("p.action_date", date('Y'));
+            // } else if ($report_date == 'last_year') {
+            //     $this->db->where("p.action_date", date('Y', strtotime('-1 year')));
+            // } else if ($report_date == '3') {
+            //     $this->db->where('p.action_date >=', date('Y-m-01', strtotime('-2 MONTH')));
+            //     $this->db->where('p.action_date <=', date('Y-m-t'));
+            // } else if ($report_date == '6') {
+            //     $this->db->where('p.action_date >=', date('Y-m-01', strtotime('-5 MONTH')));
+            //     $this->db->where('p.action_date <=', date('Y-m-t'));
+            // } else if ($report_date == '12') {
+            //     $this->db->where('p.action_date >=', date('Y-m-01', strtotime('-11 MONTH')));
+            //     $this->db->where('p.action_date <=', date('Y-m-t'));
+            // }
+        }
+
+        // if (!empty($report_date) && $report_date == 'custom' && !empty($to_date) && !empty($from_date)) {
+        //     $this->db->where('p.action_date >=', $from_date);
+        //     $this->db->where('p.action_date <=', $to_date);
+        // }
+        // if ($region_list != ""){
+        //     $this->db->group_by("")
+        // }
+        if ($region_list == "" && $sub_region_list == "") {
+
+            $this->db->group_by('a.areaid');
+            $this->db->order_by('a.name');
+        }
+        if ($region_list != "") {
+
+            $this->db->group_by('p.region_id');
+            $this->db->order_by('r.region_name');
+        }
+        if ($sub_region_list != "") {
+
+            $this->db->group_by('p.subregion_id');
+            $this->db->order_by('sr.region_name');
+        }
+        // return $this->db->get()->result_array();
+        $result = $this->db->get()->result_array();
+        // pre($this->db->last_query());
+        //echo $this->db->last_query(); die();
+        return $result;
+    }
+
+    public function get_chart_data($area = null, $data)
+    {
+        $report_date = (!empty($data['report_months'])) ? $data['report_months'] : '';
+        $to_date = (!empty($data['report_to'])) ? date("Y-m-d", strtotime($data['report_to'])) : '';
+        $from_date = (!empty($data['report_from'])) ? date("Y-m-d", strtotime($data['report_from']))  : '';
+        $category = (!empty($data['category'])) ? $data['category'] : '';
+        $duration = (!empty($data['duration'])) ? $data['duration'] : '';
+        $statusIds = ['1', '2', '3', '5','6', '7', '8', '9','10','11','12','13','15','16'];
+        $cat_id = [];
+        if (!empty($category)) {
+            foreach ($category as $c_id) {
+                $cat_id[] = $c_id;
+            }
+            $catids = $this->get_parent_category($category);
+            if (count($catids) > 0) {
+                foreach ($catids as $var) {
+                    $cat_id[] = $var['id'];
+                }
+            }
+        }
+
+
+        $pro_id = [];
+        if (!empty($report_date)) {
+            $proIds = $this->report_model->get_project_action($report_date, $to_date, $from_date, $statusIds);
+            if (!empty($proIds)) {
+                foreach ($proIds as $var) {
+                    $pro_id[] = $var['project_id'];
+                }
+            }
+        }
+
+
+        $this->db->select('SUM(CASE WHEN (p.status = 1 AND p.action_date > "' . date('Y-m-d') . '" AND p.frozen = 0) THEN 1 ELSE 0  END) as New,
+        SUM(CASE WHEN (p.status IN (2,4,6) AND p.action_date < CURDATE() AND p.frozen = 0) OR (p.status = 1 AND p.action_date <= "' . date('Y-m-d') . '" AND p.frozen = 0) THEN 1 ELSE 0 END) as Escalated,
+        SUM(CASE WHEN (p.status = 3 AND p.frozen = 0) THEN 1 ELSE 0  END) as Closed,
+        SUM(CASE WHEN (p.status IN (2,4,6)  AND p.action_date >= CURDATE() AND p.frozen = 0 ) THEN 1 ELSE 0  END) as WIP,
+        SUM(CASE WHEN (p.status = 5 AND p.frozen = 0) THEN 1 ELSE 0  END) as Rejected,
+        SUM(CASE WHEN (p.status = 9 AND p.is_assigned = 0 AND p.frozen = 0) THEN 1 ELSE 0  END) as Unassigned,
+        SUM(CASE WHEN p.frozen = 1 THEN 1 ELSE 0  END) as Frozen');
+        $this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'area a', "p.area_id = a.areaid", "LEFT");
+        if (!empty($cat_id) && count($cat_id) > 0) {
+            $this->db->group_start();
+            $this->db->where_in('p.issue_id', $cat_id);
+            $this->db->or_where_in('p.issue_id', $category);
+            $this->db->group_end();
+        }
+        if ($area != null) {
+            $this->db->where("p.area_id", $area);
+        }
+
+        if (!empty($duration)  && empty($category)) {
+            $this->db->where('p.issue_id', 0);
+        }
+
+        // pre($report_date);
+        if (!empty($report_date)) {
+            if (!empty($pro_id)) {
+                $this->db->where_in('p.id', $pro_id);
+            } else {
+                $this->db->where('p.id', 0);
+            }
+        }
+
+
+
+        if (!empty($report_date) && $report_date != 'custom') {
+
+            // if ($report_date == 'this_month') {
+            //     $this->db->where("p.action_date", date('m'));
+            // } else if ($report_date == 'last_month') {
+            //     $this->db->where("p.action_date", date('m', strtotime('-1 month')));
+            // } else if ($report_date == 'this_year') {
+            //     $this->db->where("p.action_date", date('Y'));
+            // } else if ($report_date == 'last_year') {
+            //     $this->db->where("p.action_date", date('Y', strtotime('-1 year')));
+            // } else if ($report_date == '3') {
+            //     $this->db->where('p.action_date >=', date('Y-m-01', strtotime('-2 MONTH')));
+            //     $this->db->where('p.action_date <=', date('Y-m-t'));
+            // } else if ($report_date == '6') {
+            //     $this->db->where('p.action_date >=', date('Y-m-01', strtotime('-5 MONTH')));
+            //     $this->db->where('p.action_date <=', date('Y-m-t'));
+            // } else if ($report_date == '12') {
+            //     $this->db->where('p.action_date >=', date('Y-m-01', strtotime('-11 MONTH')));
+            //     $this->db->where('p.action_date <=', date('Y-m-t'));
+            // }
+        }
+
+        // if (!empty($report_date) && $report_date == 'custom' && !empty($to_date) && !empty($from_date)) {
+        //     $this->db->where('p.action_date >=', $from_date);
+        //     $this->db->where('p.action_date <=', $to_date);
+        // }
+        //return $this->db->get()->result_array();
+
+        $result = $this->db->get()->result_array();
+        // pre($this->db->last_query());
+
+        //  echo $this->db->last_query(); die();
+        return $result;
+    }
+
+
+    public function get_region($tableParams)
+    {
+        $category = (!empty($tableParams['category'])) ? $tableParams['category'] : '';
+        $area_id = (!empty($tableParams['area_id'])) ? $tableParams['area_id'] : '';
+        $cat_id = [];
+        if (!empty($tableParams['category'])) {
+            $catid = $this->get_parent_category($category);
+            foreach ($catid as $var) {
+                $cat_id[] = $var['id'];
+            }
+        }
+
+        $this->db->select('GROUP_CONCAT( ic.id)as issue,r.id,r.region_name,count(*) AS total, 
+        SUM(CASE WHEN (p.status = 1 AND p.action_date > "' . date('Y-m-d') . '") THEN 1 ELSE 0 END) as new,
+        SUM(CASE WHEN p.status = 3 THEN 1 ELSE 0  END) as close,
+        SUM(CASE WHEN ((p.status IN (2,4,6) AND p.action_date < CURDATE()) OR (p.status = 1 AND p.project_created <= "' . date('Y-m-d') . '") ) THEN 1 ELSE 0  END) as escalated,
+        SUM(CASE WHEN (p.status IN (2,4,6)  AND p.action_date >= CURDATE() ) THEN 1 ELSE 0  END) as wip');
+        $this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'region r ', 'r.id = p.region_id', 'left');
+        $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+        $this->db->join(db_prefix() . 'issue_categories ic ', 'ic.id = p.issue_id', 'left');
+        if (!empty($cat_id) && count($cat_id) > 0) {
+            $this->db->where_in('ic.id', $cat_id);
+        }
+        $this->db->where('r.area_id', $area_id);
+        $this->db->group_by('r.id');
+        return $this->db->get()->result_array();
+    }
+
+    public function get_parent_category($category)
+    {
+        $this->db->select('id')->from(db_prefix() . 'issue_categories');
+        if ($category) {
+            $this->db->where_in('parent_issue_id', $category);
+        }
+        $query = $this->db->get();
+        $catid =  $query->result_array();
+        return $catid;
+    }
+	
+	/**
+	* $type = new/escalated/closed/wip/rejected/unassigned/frozen
+	*/
+    public function get_ae_area_map_data($tableParams, $type=null)
+    {		
+        $region_at = ''; $subregion_at = ''; 
+        $area 			= !empty($tableParams["area"]) ? $tableParams["area"] : "";
+        $region			= !empty($tableParams["region"]) ? $tableParams["region"] : "";
+        $subregion		= !empty($tableParams["subregion"]) ? $tableParams["subregion"] : "";
+        $action_taker	= (!empty($tableParams['action_taker'])) ? $tableParams['action_taker'] : '';
+		$action_reviewer = (!empty($tableParams['action_reviewer'])) ? $tableParams['action_reviewer'] : '';
+        $organization = (!empty($tableParams['organization'])) ? $tableParams['organization'] : '';
+        $category           = (!empty($tableParams['category'])) ? $tableParams['category'] : '';
+        $report_months	= (!empty($tableParams['report_months'])) ? $tableParams['report_months'] : '';
+        $from_date 		= (!empty($tableParams['from_date'])) ? date("Y-m-d", strtotime($tableParams['from_date']))  : '';
+        $to_date		= (!empty($tableParams['to_date'])) ? date("Y-m-d", strtotime($tableParams['to_date'])) : '';
+        $statusIds		= (!empty($tableParams['ticket'])) ? date("Y-m-d", strtotime($tableParams['ticket'])) : '';
+        $department      = (!empty($tableParams['department'])) ? $tableParams['department'] : '';
+
+        // $area               = (!empty($tableParams['area'])) ? $tableParams['area'] : $GLOBALS['current_user']->area;
+        // $areaid             = (!empty($tableParams['areaid'])) ? $tableParams['areaid'] : '';
+        // $region             = (!empty($tableParams['region'])) ? $tableParams['region'] : $region_at;
+        // $subregion          = (!empty($tableParams['subregion'])) ? $tableParams['subregion'] : $subregion_at;
+        // $category           = (!empty($tableParams['category'])) ? $tableParams['category'] : '';
+        // $bug                = (!empty($tableParams['bug'])) ? $tableParams['bug'] : '';
+        // $action_taker       = (!empty($tableParams['action_taker'])) ? $tableParams['action_taker'] : '';
+        // $action_reviewer    = (!empty($tableParams['action_reviewer'])) ? $tableParams['action_reviewer'] : '';
+        // $report_date        = (!empty($tableParams['report_date'])) ? $tableParams['report_date'] : '';
+        // $to_date            = (!empty($tableParams['to_date'])) ? date("Y-m-d", strtotime($tableParams['to_date'])) : '';
+        // $from_date          = (!empty($tableParams['from_date'])) ? date("Y-m-d", strtotime($tableParams['from_date']))  : '';
+        // $statusIds          = (!empty($tableParams['statusIds'])) ? $tableParams['statusIds'] : '';
+        // $duration           = (!empty($tableParams['duration'])) ? $tableParams['duration'] : '';
+		//print_r($tableParams);exit;
+        // $statusIds 		= ['1', '2', '3', '5','6', '7', '8', '9','10','11','12','13','14','15','16'];
+		
+        
+        $pro_id = [];
+        if (!empty($report_months)) {
+            $proIds = $this->report_model->get_project_action($report_months, $to_date, $from_date, $statusIds);
+            if (!empty($proIds)) {
+                foreach ($proIds as $var) {
+                    $pro_id[] = $var['project_id'];
+                }
+            }
+        }
+        $ar_id = [];
+        if (!empty($tableParams['action_reviewer'])) {
+            $arids = $this->get_ar_assistant($action_reviewer);
+            // print_r($arids);exit;
+            if (!empty($arids) ) {
+                
+                    $ar_id[] = $arids;
+                
+            }
+        }
+        $cat_id = [];
+        
+        if (!empty($tableParams['category'])) {
+            foreach($tableParams['category'] as $c_id){
+                $cat_id[] = $c_id;
+            }
+            $catids = $this->get_parent_category($category);
+            if (count($catids) > 0) {
+                foreach ($catids as $var) {
+                    $cat_id[] = $var['id'];
+                }
+            }
+        }
+		$this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+		
+        if (!empty($region)) {
+			
+			$this->db->where_in("p.region_id", $region);
+        }
+		
+        if (!empty($subregion)) {
+			
+			$this->db->where_in("p.subregion_id", $subregion);
+        }
+        
+        if (!empty($projectsupport) && count($projectsupport) > 0) {
+            //$this->db->where_in('project_members.staff_id',  $action_taker);
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active=1 and staff_id IN (' . implode(', ', $projectsupport) . '))');
+        }
+        if (!empty($organization)) {
+			
+			$this->db->where_in("p.organisation_id", $organization);
+        }
+        
+		if (!empty($action_taker) && count($action_taker) > 0) {
+			
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active=1 and staff_id IN (' . implode(', ', $action_taker) . '))');
+        }
+		// if (!empty($category) && count($category) > 0 ) {
+        //     $this->db->where_in('p.issue_id', $category);
+        // }
+        if (!empty($cat_id) && count($cat_id) > 0 ) {
+            $this->db->group_start();
+            $this->db->where_in('p.issue_id', $cat_id);
+            $this->db->or_where_in('p.issue_id', $category);
+            $this->db->group_end();
+        }
+        if (!empty($report_months)) {
+            if (!empty($pro_id)) {
+                $this->db->where_in('p.id', $pro_id);
+            } else {
+                $this->db->where('p.id', 0);
+            }
+        }
+        if (!empty($duration)  && empty($category) ) {
+            $this->db->where('p.issue_id', 0);
+        }
+        if ($area != "") {
+            $this->db->where('p.area_id', $area);
+        }
+        if($type == null){
+            $this->db->select('p.id as projectId, pm.color as markerColor');
+        }
+		$this->db->where('p.status!=', 14);
+
+        if (!empty($ar_id) && count($ar_id) > 0) {
+            //$this->db->where_in('staff_assistance.assistant_id',  $action_reviewer);
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where staff_id IN (' . implode(', ', $ar_id) . '))');
+        }
+        if (empty($statusIds) && empty($report_date)) {
+            $this->db->where('p.id  NOT IN (select id from ' . db_prefix() . 'projects where projects.status = 3 AND projects.frozen = 0)');
+            $this->db->where('p.id  NOT IN (select id from ' . db_prefix() . 'projects where  projects.frozen = 1)');
+        }
+        if (!empty($statusIds) && count($statusIds) > 0  && empty($report_date)) {
+		//new	#2c77ee 
+		if($type == 1) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#C21E56" as markerColor');
+			
+			$this->db->where('p.status', 1);
+			//$this->db->where('p.action_date <= CURDATE()');
+			$this->db->where('p.frozen', 0);
+		}
+		
+		//escalated (Delayed)	#f43653
+		if($type == 7) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('( (p.status IN (1,2,3, 4,5, 6,7,8,9,10,11,12,13,14,15,16) AND p.action_date < CURDATE() AND p.frozen = 0) OR (p.status = 1 AND p.action_date < CURDATE() AND p.frozen = 0) )');
+		}
+		
+		//closed	#2bb47a 
+		if($type == 3) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FF5733" as markerColor');
+			
+			$this->db->where('p.status', 3);
+			$this->db->where('p.frozen', 0);
+			
+			//$this->db->where('TIMESTAMPDIFF(HOUR, date_finished, now() ) <= 24');//less than 24 hours
+		}
+		
+		//wip (In Progress)(ongoing)	#f5b500
+		if($type == 2) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status IN (2, 4, 6)');
+			$this->db->where('p.action_date >= CURDATE()');
+			$this->db->where('p.frozen', 0);
+		}
+		
+		//rejected (Referred)	#7e007f
+		if($type == 5) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 5);
+			$this->db->where('p.frozen', 0);
+		}
+		if($type == 6) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 6);
+			$this->db->where('p.frozen', 0);
+		}
+		//unassigned	#5603b5
+		if($type == 9) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 9);
+			$this->db->where('p.is_assigned', 0);
+			$this->db->where('p.frozen', 0);
+		}
+		
+		//frozen	#c96118
+		if($type == 8) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.frozen', 1);
+		}
+        if($type == 10) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 10);
+			$this->db->where('p.frozen', 0);
+		}
+		if($type == 11) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 11);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 12) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 12);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 13) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 13);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 15) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 15);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 16) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 16);
+			$this->db->where('p.frozen', 0);
+		}
+    }
+
+        $result = $this->db->get()->result_array();
+		
+        // pre($this->db->last_query());
+        //echo $this->db->last_query(); die();
+		
+        return $result;
+    }
+	public function get_ae_area_map_dataold($tableParams, $type=null)
+    {		
+        $area 			= !empty($tableParams["area"]) ? $tableParams["area"] : "";
+        $region			= !empty($tableParams["region"]) ? $tableParams["region"] : "";
+        $subregion		= !empty($tableParams["subregion"]) ? $tableParams["subregion"] : "";
+        $action_taker	= (!empty($tableParams['action_taker'])) ? $tableParams['action_taker'] : '';
+		
+        $report_months	= (!empty($tableParams['report_months'])) ? $tableParams['report_months'] : '';
+        $from_date 		= (!empty($tableParams['from_date'])) ? date("Y-m-d", strtotime($tableParams['from_date']))  : '';
+        $to_date		= (!empty($tableParams['to_date'])) ? date("Y-m-d", strtotime($tableParams['to_date'])) : '';
+		
+		
+        // $statusIds 		= ['1', '2', '3', '5','6', '7', '8', '9','10','11','12','13','14','15','16'];
+		$statusIds = "";
+        //pre($category);
+        $pro_id = [];
+        // if (!empty($report_months)) {
+        //     $proIds = $this->report_model->get_project_action($report_months, $to_date, $from_date, $statusIds);
+        //     if (!empty($proIds)) {
+        //         foreach ($proIds as $var) {
+        //             $pro_id[] = $var['project_id'];
+        //         }
+        //     }
+        // }
+        
+		$this->db->from(db_prefix() . 'projects p');
+        $this->db->join(db_prefix() . 'project_status pm ', 'pm.id = p.status', 'left');
+		
+        if (!empty($region)) {
+			
+			$this->db->where_in("p.region_id", $region);
+        }
+		
+        if (!empty($subregion)) {
+			
+			$this->db->where_in("p.subregion_id", $subregion);
+        }
+		
+		if (!empty($action_taker) && count($action_taker) > 0) {
+			
+            $this->db->where('p.id IN (select project_id from ' . db_prefix() . 'project_members where active=1 and staff_id IN (' . implode(', ', $action_taker) . '))');
+        }
+		
+        if (!empty($report_months)) {
+            if (!empty($pro_id)) {
+                $this->db->where_in('p.id', $pro_id);
+            } else {
+                $this->db->where('p.id', 0);
+            }
+        }
+        if ($area != "") {
+            $this->db->where('p.area_id', $area);
+        }
+		
+		
+		//new	#2c77ee 
+		if($type == 1) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#C21E56" as markerColor');
+			
+			$this->db->where('p.status', 1);
+			//$this->db->where('p.action_date <= CURDATE()');
+			$this->db->where('p.frozen', 0);
+		}
+		
+		//escalated (Delayed)	#f43653
+		if($type == 7) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('( (p.status IN (1,2,3, 4,5, 6,7,8,9,10,11,12,13,14,15,16) AND p.action_date < CURDATE() AND p.frozen = 0) OR (p.status = 1 AND p.action_date < CURDATE() AND p.frozen = 0) )');
+		}
+		
+		//closed	#2bb47a 
+		if($type == 3) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FF5733" as markerColor');
+			
+			$this->db->where('p.status', 3);
+			$this->db->where('p.frozen', 0);
+			
+			//$this->db->where('TIMESTAMPDIFF(HOUR, date_finished, now() ) <= 24');//less than 24 hours
+		}
+		
+		//wip (In Progress)(ongoing)	#f5b500
+		if($type == 2) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status IN (2, 4, 6)');
+			$this->db->where('p.action_date >= CURDATE()');
+			$this->db->where('p.frozen', 0);
+		}
+		
+		//rejected (Referred)	#7e007f
+		if($type == 5) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 5);
+			$this->db->where('p.frozen', 0);
+		}
+		if($type == 6) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 6);
+			$this->db->where('p.frozen', 0);
+		}
+		//unassigned	#5603b5
+		if($type == 9) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 9);
+			$this->db->where('p.is_assigned', 0);
+			$this->db->where('p.frozen', 0);
+		}
+		
+		//frozen	#c96118
+		if($type == 8) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.frozen', 1);
+		}
+        if($type == 10) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 10);
+			$this->db->where('p.frozen', 0);
+		}
+		if($type == 11) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 11);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 12) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 12);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 13) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 13);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 15) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 15);
+			$this->db->where('p.frozen', 0);
+		}
+        if($type == 16) {
+			
+            $this->db->select('p.id as projectId, pm.color, "#FFDF00" as markerColor');
+			
+			$this->db->where('p.status', 16);
+			$this->db->where('p.frozen', 0);
+		}
+        $result = $this->db->get()->result_array();
+		
+        // pre($this->db->last_query());
+        //echo $this->db->last_query(); die();
+		
+        return $result;
+    }
+	public function updateViewStatus($project_id){
+        $userId = $GLOBALS['current_user']->staffid;
+        $this->db->select('id');
+        $this->db->from('project_members');
+        $this->db->where('staff_id',$userId);
+        $this->db->where('project_id',$project_id);
+        $this->db->where('viewed',0);
+        // $this->db->where('assigned',1);
+        $this->db->order_by('id','desc');
+        $this->db->limit(1); 
+         
+        $row = $this->db->get()->row();
+    if (isset($row)) {
+        $data = array('viewed' => 1);
+         $this->db->update('project_members', $data, "id = " .$row->id);
+    } else {
+        return false;
+    }
+        // $data = array('view' => 1);
+        // $this->db->update('projects', $data, "id = " .$project_id);
+        //return true;
+    }
+
+    public function getViewStatus($project_id){
+        $userId = $GLOBALS['current_user']->staffid;
+        $this->db->select('viewed');
+        $this->db->from('project_members');
+        $this->db->where('staff_id',$userId);
+        $this->db->where('project_id',$project_id);
+        // $this->db->where('viewed =0');
+        //  $this->db->where('assigned',1);
+         $this->db->order_by('id','desc');
+        $this->db->limit(1);  
+        $row = $this->db->get()->row();
+    // echo $this->db->last_query();exit;
+        // echo $row->viewed.'------'.$project_id;
+    if(!empty($row->viewed)){
+        
+        return $row->viewed;
+    }else{
+        return 0;
+    }
+        
+    
+    }
+
+    public function getsarvayerLatLong($project_id){
+        $this->db->select('latitude,longitude');
+        $this->db->from('project_files');
+        $this->db->where('project_id',$project_id);
+         $this->db->order_by('id','desc');
+        $this->db->limit(1);  
+        $row = $this->db->get()->row();
+        if(!empty($row)){
+            $data = array("latitude"=> $row->latitude, "longitude"=>$row->longitude);
+        }else{
+            $data = array("latitude"=> 0, "longitude"=>0);
+        }
+        
+        return $data;
+    }
+	
+}

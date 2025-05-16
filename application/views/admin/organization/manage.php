@@ -1,0 +1,485 @@
+<?php defined('BASEPATH') or exit('No direct script access allowed'); ?>
+<?php init_head(); 
+    $area = $GLOBALS['current_user']->area;
+?>
+
+<div id="wrapper">
+    <div class="content">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="panel_s custom-panel1">
+                    <div class="panel-body">
+                        <div class="panel-header">
+                            <a href="#" onclick="new_organization(); return false;"
+                                class="btn btn-custom add-area-admin pull-right display-block">
+                                <?php echo _l('add_organization');?>
+                            </a>
+
+                            <h1><?php echo _l('organization'); ?><span><?php echo _l('here_you_can_view_add_edit_and_deactivate_organization'); ?>
+                                </span></h1>
+                            <hr class="hr-panel-heading" />
+                        </div>
+                        <div class="table-responsive">
+                            <?php render_datatable(array(
+                            _l('name'),
+                            _l('region'),
+                            _l('kml_file'),
+                            _l('status'),
+                            _l('options'),
+                            _l('add_department'),
+                            _l('view_departments'),
+                        ), 'organizations'); ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal fade sidebarModal" id="organization" tabindex="-1" role="dialog" style="width:40%">
+    <div class="modal-dialog">
+        <?php echo form_open_multipart(admin_url('staff/addedit'), array('id' => 'organization_form')); ?>
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                        aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title">
+                    <span class="edit-title"><?php echo _l('edit_organization'); ?></span>
+                    <span class="add-title"><?php echo _l('add_organization'); ?></span>
+                </h4>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-12">
+                        <div id="addition"></div>
+                        <p class="form-instruction add-title">
+                            <?php echo _l('fill_in_the_following_fields_to_add_a_org')?></p>
+                        <p class="form-instruction edit-title">
+                            <?php echo _l('fill_in_the_following_fields_to_edit_a_org')?></p>
+                    </div>
+                    <hr class="hr-panel-model" />
+                </div>
+
+                <div class="form-group" app-field-wrapper="region_id">
+					<div class="form-select-field">
+						<select name="region_id" class="selectpicker show-tick" id="region_id" data-width="100%" data-none-selected-text="<?php echo _l('dropdown_non_selected_tex'); ?>" data-live-search="true" title="<?php echo _l('select_city_corporation_req');?>">
+						</select>
+						<label class="select-label"><?php echo _l('region'); ?><span class="required_red">*</span></label>
+						<p id="region_id-error" class="text-danger required_size"></p>
+					</div>
+				</div>
+
+                <div class="form-group">
+                    <?php echo render_input('name', 'organisation_req'); ?>
+                </div>
+                <div class="form-input-field mB15 kml-file">
+                    <div for="attachment" class="mB5"><?php echo _l('kml_file'); ?><span
+                            style="font-size:12px;">&nbsp;<?php echo _l('select_kml_only_50');?></span></div>
+                    <div>
+                        <input type="file" name="file" id="kml" class="form-control">
+                        <label for="file" title="" data-title=""></label>
+                    </div>
+                </div>
+
+                <div class="form-input-field mB15 kml-file-delete border hide">
+                    <div class="kml-file-name">
+                        <span class="kml-file-name-span">
+
+                        </span>
+                        
+                    </div>
+                    <div>
+                        <button type="button" class="btn delete-kml"><?php echo _l('delete_kml');?></button>
+                    </div>
+                </div>
+
+                <div class="form-input-field mB15 notes-kml border hide">
+                    <div class="kml-file-name">
+                        <span class="notes-span" style="color:red;">
+
+                        </span>
+                        
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-custom"><?php echo _l('submit');?></button>
+                    <button type="button" class="btn btn-cancel"
+                        data-dismiss="modal"><?php echo _l('cancel');?></button>
+
+                </div>
+            </div><!-- /.modal-content -->
+
+            <!-- <div class="notes mB20">
+                <h5>
+                    <p class="form-field-notes mL0"><?php //echo _l('note'); ?></p>
+                </h5>
+                <p><?php //echo _l('pctdtasifenesitstitaaicaasl');?></p>
+            </div> -->
+            <?php echo form_close(); ?>
+        </div><!-- /.modal-dialog -->
+    </div><!-- /.modal -->
+</div>
+</div>
+<!-- Add Department With KML file-->
+<div class="modal fade sidebarModal" id="department" tabindex="-1" role="dialog" style="width:40%">
+    <div class="modal-dialog">
+        <?php echo form_open_multipart(admin_url('staff/department'), array('id' => 'department_form1')); ?>
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                        aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title">
+                    <span class="edit-title-dept"><?php echo _l('edit_department'); ?></span>
+                    <span class="add-title-dept"><?php echo _l('add_department'); ?></span>
+                </h4>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-12">
+                        <div id="addition-dept"></div>
+                        <p class="form-instruction add-title-dept">
+                            <?php echo _l('fill_in_the_following_fields_to_add_a_dept')?></p>
+                        <p class="form-instruction edit-title-dept">
+                            <?php echo _l('fill_in_the_following_fields_to_edit_a_dept')?></p>
+                    </div>
+                    <hr class="hr-panel-model" />
+                </div>
+
+                <div class="form-group">
+                    <?php echo render_input('name', 'organisation_req'); ?>
+                  
+                </div>
+                <div class="form-group">
+                    <?php echo render_input('deparment_name', 'department_req'); ?>
+                </div>
+                <div class="form-input-field mB15">
+                    <div for="attachment" class="mB5"><?php echo _l('kml_file'); ?><span
+                            style="font-size:12px;">&nbsp;<?php echo _l('select_kml_only_50');?></span></div>
+                    <div>
+                        <input type="file" name="file" id="kml" class="form-control">
+                        <label for="file" title="" data-title=""></label>
+
+                    </div>
+                </div>
+
+
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-custom"><?php echo _l('submit');?></button>
+                    <button type="button" class="btn btn-cancel"
+                        data-dismiss="modal"><?php echo _l('cancel');?></button>
+
+                </div>
+            </div><!-- /.modal-content -->
+
+            <div class="notes mB20">
+                <h5>
+                    <p class="form-field-notes mL0"><?php echo _l('note'); ?></p>
+                </h5>
+                <p><?php echo _l('pctdtasifenesitstitaaicaasl');?></p>
+            </div>
+            <?php echo form_close(); ?>
+        </div><!-- /.modal-dialog -->
+    </div><!-- /.modal -->
+</div>
+</div>
+
+<?php init_tail(); ?>
+<script>
+let REGION_LIST = {};
+$(function() {
+    var columnDefs = [{
+        "width": "35%"
+    }, {
+        "width": "35%"
+    }, {
+        "width": "35%"
+    }, {
+        "width": "15%",
+        "className": "dt_status_column"
+    }, {
+        "width": "15%",
+        "className": "dt_center_align"
+    }];
+    initDataTable('.table-organizations', window.location.href, [6], [6], undefined, [0, 'asc'], '',
+        columnDefs);
+
+    appValidateForm($('form'), {
+        name: {
+            required: true,
+            maxlength: 50,
+            // charsonly: true,
+            // noSpace: true,
+
+        },
+
+    }, manage_organizations);
+
+    $('#organization').on('hidden.bs.modal', function(event) {
+        $('#organization input[name="name"]').removeClass("label-up");
+        $('#addition').html('');
+        $('#organization input[type="text"]').val('');
+        $('.add-title').removeClass('hide');
+        $('.edit-title').removeClass('hide');
+        $('.text-danger').css("display", "none");
+        $('.kml-file-delete').addClass('hide');
+        $('.notes-kml').addClass('hide');
+
+    });
+
+    getRegionData();
+
+});
+
+function manage_organizations(form) {
+    var formURL = $(form).attr("action");
+    var formData = new FormData($(form)[0]);
+    var url = form.action;
+    $.ajax({
+        type: $(form).attr('method'),
+        data: formData,
+        mimeType: $(form).attr('enctype'),
+        contentType: false,
+        cache: false,
+        processData: false,
+        url: formURL
+
+    }).done(function(response) {
+        response = JSON.parse(response);
+        if (response.success == true) {
+            alert_float('success', response.message);
+            $('.table-organizations').DataTable().ajax.reload();
+            $("#organization").trigger('reset');
+            $('#organization').modal('hide');
+        } else {
+            alert_float('danger', response.message);
+        }
+
+    }).fail(function(data) {
+        var error = JSON.parse(data.responseText);
+        alert_float('danger', error.message);
+    });
+    return false;
+}
+
+$('input[name="file"]').change(function(e) {
+    var fileName = e.target.files[0].name;
+    var fileSize = e.target.files[0].size;
+    extension = fileName.split('.').pop();
+    if (fileName != '') {
+        $('#kml-error').css("display", "none");
+    }
+    if (extension != 'kml') {
+        alert_float('danger', "<?php echo _l('only_kml_file_type_is_allowed')?>");
+        $('input[name=file]').val('');
+        return false;
+    }
+    if (fileSize > 52428800) {
+        alert_float('danger', 'File uploaded is greater than 50 MB');
+        $('input[name=file]').val('');
+        return false;
+    }
+});
+
+function new_organization() {
+    $('#organization').modal('show');
+    $('.edit-title').addClass('hide');
+    $('.kml-file').removeClass('hide');
+}
+
+function edit_organization(invoker, id,file) {
+    $('#addition').append(hidden_input('id', id));
+    $('#organization input[name="name"]').val($(invoker).data('name'));
+    $('#organization input[name="name"]').addClass("label-up");
+    $('#organization').modal('show');
+    $('.add-title').addClass('hide');
+    $('.kml-file-delete').removeClass('hide');
+    $('.kml-file-name-span').text(file);
+
+    $('.text-danger').css("display", "none");
+    let regionId = $(invoker).data('rid');
+    
+    let orgFile = '<?= base_url("uploads/organization/")?>'+file;
+    getRegionData(regionId);
+    // if(file!=''){
+    //     toDataUrl(orgFile, function(x) {
+    //         if (orgFile === '') {
+    //             $('#kml').val('');
+    //         } else {
+    //             let fileName = orgFile;
+    //             let file = new File([x], fileName, {
+    //                 type: "kml",
+    //                 lastModified: new Date().getTime()
+    //             }, 'utf-8');
+    //             let container = new DataTransfer();
+    //             container.items.add(file);
+    //             document.querySelector('#kml').files = container.files;
+    //         }
+    //     })
+    // }
+    
+}
+
+function add_department(invoker, id) {
+    $('#addition-dept').html('');
+    $('#addition-dept').append(hidden_input('org_id', id));
+    $('#department input[name="name"]').val($(invoker).data('name'));
+    $('#department input[name="name"]').addClass("label-up");
+    $('#department').modal('show');
+    $('.edit-title-dept').addClass('hide');
+    $('.text-danger').css("display", "none");
+}
+
+/*Function to get and populate Region Data*/
+const getRegionData = (selectedRegion = null) => {
+    let area = "<?= $area ?>";
+    let data = {
+        'area_id': area,
+        'group_by': false
+    }
+    $.post(admin_url + 'region/get_region', data).done((res) => {
+        res = JSON.parse(res);
+
+        if (res.success == true) {
+            REGION_LIST = {
+                ...res.region_list
+            };
+            let options = "";
+            for (let region in REGION_LIST) {
+                let regionId = REGION_LIST[region][0].region_id;
+                let regionName = REGION_LIST[region][0].region_name;
+                options += `<option value='${regionId}'>${regionName}</option>`;
+
+            }
+            $("#region_id").html(options);
+            $('#region_id').selectpicker('refresh');
+            
+            if (selectedRegion !== null) {
+                $('#region_id').selectpicker('val', selectedRegion);
+            }
+        }
+        
+        //set updated csrf token -added by Tapeshwar
+        $("input[name='csrf_token_name']").val(res.updated_csrf_token);
+        $("#updated_csrf_token").val(res.updated_csrf_token);//use for header ajax token update.
+        
+    }).fail(function(data) {
+        var error = JSON.parse(data.responseText);
+        console.log("Region option ajax error:", error);
+    });
+}
+
+
+const changeStatus = (invoker, id) => {
+
+    let url = admin_url + "staff/change_area_status";
+    let data = {};
+
+    if ($(invoker).is(":checked")) {
+        data = {
+            'id': id,
+            'status': 1
+        }
+    } else {
+        data = {
+            'id': id,
+            'status': 0
+        }
+    }
+    $.ajax({
+        processing: 'true',
+        serverSide: 'true',
+        type: "POST",
+        url: url,
+        data: data,
+        success: function(res) {
+            res = JSON.parse(res);
+            console.log(res);
+            if (res.success) {
+                $(this).prop('checked', !$(this).prop('checked'));
+                if (res.check_status) {
+                    $(invoker).prop('checked', true)
+                } else if (!res.check_status) {
+                    $(invoker).prop('checked', false)
+                }
+                $('.table-organizations').DataTable().ajax.reload();
+                alert_float('success', res.message);
+            } else {
+                if (res.check_status) {
+                    $(invoker).prop('checked', true)
+                } else if (!res.check_status) {
+                    $(invoker).prop('checked', false)
+                }
+                $('.table-organizations').DataTable().ajax.reload();
+                alert_float('danger', res.message);
+            }
+        }
+    })
+
+}
+
+$(document).on('click', '.delete-kml', function() {
+    let orgId = $('input[name="id"]').val();
+
+    if (orgId == '') {
+        alert_float('danger', 'Something went wrong. Please try again.');
+        return false;
+    }
+
+    if (confirm('Are you sure you want to delete this kml?')) {
+
+        $.ajax({
+            processing: 'true',
+            serverSide: 'true',
+            type: 'POST',
+            url: admin_url + 'staff/deletekml',
+            data: {
+                orgId: orgId
+            },
+            success: function(response) {
+                let data = $.parseJSON(response);
+                if (data.success) {
+                    alert_float('success', data.message);
+                    $('.notes-kml').removeClass('hide');
+
+                    if(data.not_deleted == true){
+                        $('.notes-span').text("<?php echo _l('delete_kml_note')?>");
+                    }
+                    $('.kml-file-delete').addClass('hide');
+                    // if(data.not_deleted.length > 0){
+                        
+                    //     let innerHtml='';
+                    //     $.each(data.not_deleted, function(index, value) {
+                    //         innerHtml += 'Ward name ' +value.ward_name+ ' and ward No ' +value.ward_no+ ' can not delete because project support is created for this ward.<br>';
+                    //     });
+
+                    //     $('.notes-span').html(innerHtml);
+                        
+                    // }
+                    
+                } else {
+                    alert_float('danger', data.message);
+                }
+                
+            }
+        });
+    }
+});
+
+// function toDataUrl(url, callback) {
+//     var xhr = new XMLHttpRequest();
+    
+//     xhr.onload = function() {
+//         callback(xhr.response);
+//     };
+//     xhr.open('GET', url);
+//     xhr.responseType = 'blob';
+//     xhr.send();
+//     alert(xhr.send());
+// }
+
+
+</script>
+</body>
+
+</html>

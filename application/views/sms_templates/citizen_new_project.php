@@ -1,0 +1,1 @@
+A new project ID <?php echo $id; ?> created and due on <?php echo $duedate;?>.

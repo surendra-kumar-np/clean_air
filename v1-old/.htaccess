@@ -1,0 +1,35 @@
+<IfModule mod_rewrite.c>
+	RewriteEngine On
+	#RewriteBase /
+
+	#RewriteCond %{HTTP_HOST} ^cleanair\.bihar\.gov\.in [NC]
+	RewriteCond %{SERVER_PORT} 80
+	RewriteRule ^(.*)$ https://cleanair.bihar.gov.in/$1 [R,L]
+
+	############################
+	
+	############################
+
+	RewriteCond %{REQUEST_FILENAME} !-f
+	RewriteCond %{REQUEST_FILENAME} !-d
+	RewriteRule ^ index.php [QSA,L]
+
+	Header always set X-Frame-Options "SAMEORIGIN"
+	Header always set X-Content-Type-Options: nosniff
+	Header always set X-XSS-Protection "1; mode=block"
+
+	Header unset X-Powered-By
+
+	#max-age 18 weeks
+	Header set Strict-Transport-Security "max-age=10886400;"
+
+	Header add Access-Control-Allow-Methods "GET, POST"
+
+	#Disable server signature ---Not working (Need to set in )
+	#ServerSignature Off
+</IfModule>
+
+<FilesMatch "web.config|.env.production|.env.development">
+	Order Allow,Deny
+	Deny from all
+</FilesMatch>

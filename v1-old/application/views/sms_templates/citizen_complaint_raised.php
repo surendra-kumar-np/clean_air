@@ -1,0 +1,1 @@
+Hello Citizen. You have raised a complaint on the Bihar Clean Air App. Ticket ID <?php echo $id; ?> has been generated on <?php echo $duedate;?> date under the heading <?php echo $complaint_title; ?>. The ticket has been assigned to <?php echo $assigned_to; ?> and will be resolved by <?php echo $resolve_date; ?>
